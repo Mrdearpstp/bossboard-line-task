@@ -1,0 +1,65 @@
+[
+  {
+    "id": "task-1",
+    "title": "ออกแบบ LINE notification flow",
+    "description": "กำหนดข้อความแจ้งเตือนสำหรับงานใหม่ งานใกล้ครบกำหนด และงานเลยกำหนด",
+    "project": "LINE Integration",
+    "status": "progress",
+    "priority": "high",
+    "assignee": "Narin",
+    "dueDate": "2026-05-18",
+    "tags": ["LINE", "Automation"],
+    "activity": [
+      { "id": "a1", "text": "Narin ปรับข้อความแจ้งเตือนงานใกล้ครบกำหนด", "time": "วันนี้ 10:15" },
+      { "id": "a2", "text": "ระบบจำลองส่ง LINE preview สำเร็จ", "time": "เมื่อวาน 16:40" }
+    ]
+  },
+  {
+    "id": "task-2",
+    "title": "สร้าง Project dashboard",
+    "description": "รวมจำนวนงานตามสถานะ งานเสี่ยงเลยกำหนด และงานของฉันในหน้าเดียว",
+    "project": "Core App",
+    "status": "review",
+    "priority": "medium",
+    "assignee": "Mali",
+    "dueDate": "2026-05-20",
+    "tags": ["Dashboard"],
+    "activity": [{ "id": "a3", "text": "Mali ส่งหน้า dashboard ให้ตรวจ", "time": "วันนี้ 09:30" }]
+  },
+  {
+    "id": "task-3",
+    "title": "กำหนด schema สำหรับ task และ comment",
+    "description": "เตรียมโครงสร้างข้อมูลให้รองรับ workspace, assignee, due date, activity log และ LINE user id",
+    "project": "Data Model",
+    "status": "todo",
+    "priority": "high",
+    "assignee": "Krit",
+    "dueDate": "2026-05-22",
+    "tags": ["Database"],
+    "activity": [{ "id": "a4", "text": "Krit เพิ่มฟิลด์ lineUserId ใน draft schema", "time": "เมื่อวาน 11:05" }]
+  },
+  {
+    "id": "task-4",
+    "title": "ทดสอบมุมมอง Kanban กับทีมขาย",
+    "description": "รวบรวม feedback เรื่อง column, filter, และข้อมูลที่ควรแสดงบนการ์ดงาน",
+    "project": "UX Research",
+    "status": "done",
+    "priority": "low",
+    "assignee": "Pim",
+    "dueDate": "2026-05-15",
+    "tags": ["Research"],
+    "activity": [{ "id": "a5", "text": "Pim ปิดรอบสัมภาษณ์และสรุป feedback", "time": "15 พ.ค. 2026" }]
+  },
+  {
+    "id": "task-5",
+    "title": "เพิ่มตัวกรองงานของฉัน",
+    "description": "ให้ผู้ใช้ค้นหางานจากชื่อ โปรเจกต์ ผู้รับผิดชอบ สถานะ และ priority ได้จากทุก view",
+    "project": "Core App",
+    "status": "progress",
+    "priority": "medium",
+    "assignee": "Narin",
+    "dueDate": "2026-05-24",
+    "tags": ["Search", "Filter"],
+    "activity": [{ "id": "a6", "text": "Narin ผูก search กับ board view แล้ว", "time": "วันนี้ 13:20" }]
+  }
+]

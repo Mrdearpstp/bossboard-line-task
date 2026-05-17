@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LineTask - ติดตามงานผ่าน LINE</title>
+    <link rel="stylesheet" href="./static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">LT</div>
+          <div>
+            <div class="brand-title">LineTask</div>
+            <div class="brand-subtitle">Task workspace for LINE teams</div>
+          </div>
+        </div>
+
+        <nav class="nav-section" aria-label="Main navigation">
+          <span class="nav-label">Workspace</span>
+          <button class="nav-button active" type="button">Dashboard</button>
+          <button class="nav-button" type="button">Projects</button>
+          <button class="nav-button" type="button">Team</button>
+          <button class="nav-button" type="button">Notifications</button>
+          <button class="nav-button" type="button">Settings</button>
+        </nav>
+
+        <section class="sidebar-panel">
+          <strong>LINE status</strong>
+          <p>พร้อมต่อ Messaging API, daily summary และ due-date reminders</p>
+        </section>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1>ติดตามงานทีมผ่าน LINE</h1>
+            <p>จัดการงาน โปรเจกต์ สถานะ ผู้รับผิดชอบ และการแจ้งเตือนในที่เดียว</p>
+          </div>
+          <div class="topbar-actions">
+            <input id="searchInput" class="search" placeholder="ค้นหางาน โปรเจกต์ หรือผู้รับผิดชอบ" />
+            <a class="mobile-link" href="./line.html">LINE mode</a>
+            <button id="newTaskButton" class="primary-button" type="button">+ New task</button>
+          </div>
+        </header>
+
+        <section class="metrics" aria-label="Workspace metrics">
+          <article class="metric">
+            <span>งานทั้งหมด</span>
+            <strong id="metricTotal">0</strong>
+          </article>
+          <article class="metric">
+            <span>กำลังทำ</span>
+            <strong id="metricActive">0</strong>
+          </article>
+          <article class="metric">
+            <span>ครบกำหนด 3 วัน</span>
+            <strong id="metricDueSoon">0</strong>
+          </article>
+          <article class="metric">
+            <span>เสร็จแล้ว</span>
+            <strong id="metricDone">0</strong>
+          </article>
+        </section>
+
+        <section class="workspace-band">
+          <div class="workspace-main">
+            <div class="toolbar">
+              <div class="view-tabs">
+                <button class="tab active" data-view="board" type="button">Board</button>
+                <button class="tab" data-view="list" type="button">List</button>
+                <button class="tab" data-view="calendar" type="button">Calendar</button>
+              </div>
+              <select id="projectFilter" class="select">
+                <option value="">ทุกโปรเจกต์</option>
+              </select>
+            </div>
+
+            <section id="boardView" class="board"></section>
+            <section id="listView" class="list-panel hidden"></section>
+            <section id="calendarView" class="calendar-panel hidden"></section>
+          </div>
+
+          <aside class="line-panel">
+            <div>
+              <h2>LINE automation</h2>
+              <p>ตัวอย่างข้อความที่ระบบจะส่งเข้าห้อง LINE</p>
+            </div>
+            <div class="line-preview">
+              <strong>Preview message</strong>
+              <div id="linePreview" class="line-message"></div>
+            </div>
+            <div class="automation-list">
+              <div class="automation-item"><span>✓</span> แจ้งเตือนเมื่อมีงานใหม่</div>
+              <div class="automation-item"><span>✓</span> สรุปงานประจำวันเข้ากลุ่ม LINE</div>
+              <div class="automation-item"><span>✓</span> เตือนงานเลยกำหนดทุกเช้า</div>
+              <div class="automation-item"><span>✓</span> เตรียม field สำหรับ LINE user id</div>
+            </div>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <div id="drawerBackdrop" class="drawer-backdrop hidden">
+      <form id="taskForm" class="drawer">
+        <div class="drawer-header">
+          <div>
+            <h2>รายละเอียดงาน</h2>
+            <p>แก้ไขข้อมูลแล้วบันทึกลงเบราว์เซอร์เครื่องนี้</p>
+          </div>
+          <button id="closeDrawerButton" class="icon-button" type="button" aria-label="Close">×</button>
+        </div>
+
+        <input id="taskId" type="hidden" />
+        <label>
+          ชื่องาน
+          <input id="taskTitle" required />
+        </label>
+        <label>
+          รายละเอียด
+          <textarea id="taskDescription"></textarea>
+        </label>
+        <div class="field-row">
+          <label>
+            โปรเจกต์
+            <input id="taskProject" required />
+          </label>
+          <label>
+            ผู้รับผิดชอบ
+            <input id="taskAssignee" required />
+          </label>
+        </div>
+        <div class="field-row">
+          <label>
+            สถานะ
+            <select id="taskStatus">
+              <option value="todo">To Do</option>
+              <option value="progress">In Progress</option>
+              <option value="review">Review</option>
+              <option value="done">Done</option>
+            </select>
+          </label>
+          <label>
+            Priority
+            <select id="taskPriority">
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label>
+            Due date
+            <input id="taskDueDate" type="date" required />
+          </label>
+        </div>
+        <label>
+          Tags
+          <input id="taskTags" placeholder="LINE, Automation" />
+        </label>
+
+        <div class="drawer-actions">
+          <button class="primary-button" type="submit">Save task</button>
+          <button id="deleteTaskButton" class="danger-button" type="button">Delete</button>
+        </div>
+
+        <section>
+          <h3>Activity</h3>
+          <div id="activityList" class="activity-list"></div>
+        </section>
+      </form>
+    </div>
+
+    <script src="./static/app.js"></script>
+  </body>
+</html>

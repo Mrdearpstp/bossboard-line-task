@@ -1,0 +1,867 @@
+const mobileStatusMeta = {
+  todo: { label: "รอทำ", className: "status-todo" },
+  progress: { label: "กำลังทำ", className: "status-progress" },
+  review: { label: "รอตรวจ", className: "status-review" },
+  done: { label: "เสร็จแล้ว", className: "status-done" }
+};
+
+const mobilePriorityMeta = {
+  high: { label: "ด่วน", className: "priority-high" },
+  medium: { label: "ปกติ", className: "priority-medium" },
+  low: { label: "ต่ำ", className: "priority-low" }
+};
+
+const fallbackTasks = [
+  {
+    id: "task-1",
+    title: "ออกแบบ LINE notification flow",
+    description: "กำหนดข้อความแจ้งเตือนสำหรับงานใหม่ งานใกล้ครบกำหนด และงานเลยกำหนด",
+    project: "LINE Integration",
+    status: "progress",
+    priority: "high",
+    assignee: "Narin",
+    dueDate: "2026-05-18",
+    tags: ["LINE", "Automation"],
+    activity: []
+  },
+  {
+    id: "task-2",
+    title: "สร้าง Project dashboard",
+    description: "รวมจำนวนงานตามสถานะ งานเสี่ยงเลยกำหนด และงานของฉันในหน้าเดียว",
+    project: "Core App",
+    status: "review",
+    priority: "medium",
+    assignee: "Mali",
+    dueDate: "2026-05-20",
+    tags: ["Dashboard"],
+    activity: []
+  },
+  {
+    id: "task-3",
+    title: "กำหนด schema สำหรับ task และ comment",
+    description: "เตรียมโครงสร้างข้อมูลให้รองรับ workspace, assignee, due date, activity log และ LINE user id",
+    project: "Data Model",
+    status: "todo",
+    priority: "high",
+    assignee: "Krit",
+    dueDate: "2026-05-22",
+    tags: ["Database"],
+    activity: []
+  }
+];
+
+let mobileTasks = [];
+let activeFilter = "all";
+let currentLineUserId = "";
+let assigneeOptions = [];
+let teamState = {
+  user: null,
+  memberships: [],
+  activeOrganization: null,
+  members: []
+};
+let pendingInviteOrganizationId = "";
+let myKpi = null;
+
+const mobileElements = {
+  taskList: document.querySelector("#taskList"),
+  filterText: document.querySelector("#filterText"),
+  toast: document.querySelector("#toast"),
+  taskDialog: document.querySelector("#taskDialog"),
+  mobileTaskForm: document.querySelector("#mobileTaskForm"),
+  newMobileTaskButton: document.querySelector("#newMobileTaskButton"),
+  closeDialogButton: document.querySelector("#closeDialogButton"),
+  lineStatusTitle: document.querySelector("#lineStatusTitle"),
+  lineStatusText: document.querySelector("#lineStatusText"),
+  lineLoginButton: document.querySelector("#lineLoginButton"),
+  sectionTitle: document.querySelector(".section-header h2"),
+  sectionSubtitle: document.querySelector("#filterText")
+};
+
+document.querySelectorAll(".quick-card").forEach((button) => {
+  button.addEventListener("click", () => {
+    activeFilter = button.dataset.filter;
+    document.querySelectorAll(".quick-card").forEach((item) => item.classList.toggle("active", item === button));
+    renderMobile();
+  });
+});
+
+mobileElements.newMobileTaskButton.addEventListener("click", () => openMobileDialog(createMobileTask()));
+mobileElements.closeDialogButton.addEventListener("click", () => mobileElements.taskDialog.close());
+mobileElements.mobileTaskForm.addEventListener("submit", saveMobileTask);
+mobileElements.lineLoginButton.addEventListener("click", () => {
+  if (window.liff && !window.liff.isLoggedIn()) {
+    window.liff.login();
+  }
+});
+
+document.querySelectorAll(".bottom-nav button").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll(".bottom-nav button").forEach((item) => item.classList.toggle("active", item === button));
+    if (button.textContent.trim() === "ตั้งค่า") {
+      renderTeamSettings();
+    } else if (button.textContent.trim() === "โปรไฟล์" || button.textContent.trim() === "งานของฉัน") {
+      renderMyProfile();
+    } else {
+      renderMobile();
+    }
+  });
+});
+
+initializeLine();
+loadMobileTasks();
+
+async function initializeLine() {
+  try {
+    const response = await fetch("/api/line/config");
+    const config = await response.json();
+
+    if (!config.isLiffConfigured) {
+      setLineStatus("ยังไม่ตั้งค่า LIFF", "ใส่ LINE_LIFF_ID ในไฟล์ .env แล้ว restart server");
+      return;
+    }
+
+    if (!window.liff) {
+      setLineStatus("โหลด LIFF SDK ไม่ได้", "ตรวจสอบ internet หรือเปิดผ่าน LINE อีกครั้ง");
+      return;
+    }
+
+    await window.liff.init({ liffId: config.liffId });
+    if (!window.liff.isLoggedIn()) {
+      setLineStatus("ยังไม่ได้เข้า LINE", "กดปุ่มเพื่อ login ผ่าน LINE");
+      mobileElements.lineLoginButton.classList.remove("hidden");
+      return;
+    }
+
+    const profile = await window.liff.getProfile();
+    currentLineUserId = profile.userId;
+    await fetch("/api/line/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile)
+    });
+    setLineStatus("เชื่อม LINE แล้ว", `สวัสดี ${profile.displayName}`);
+    mobileElements.lineLoginButton.classList.add("hidden");
+  } catch {
+    setLineStatus("LINE ยังไม่พร้อม", "หน้านี้ยังใช้แบบเว็บได้ และจะเชื่อม LINE เมื่อ config ครบ");
+  }
+  await loadTeamState();
+  handleInviteFromQuery();
+}
+
+function setLineStatus(title, text) {
+  mobileElements.lineStatusTitle.textContent = title;
+  mobileElements.lineStatusText.textContent = text;
+}
+
+async function pushSummaryToLine() {
+  try {
+    const response = await fetch("/api/line/push-summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Cannot push summary");
+    showToast("ส่งสรุปเข้า LINE แล้ว");
+  } catch (error) {
+    const openTasks = mobileTasks.filter((task) => task.status !== "done").length;
+    showToast(`ยังส่งจริงไม่ได้: ${error.message || "ต้องตั้งค่า LINE token"} | งานค้าง ${openTasks} งาน`);
+  }
+}
+
+async function loadMobileTasks() {
+  try {
+    const response = await fetch("/api/tasks");
+    if (!response.ok) throw new Error("Cannot load tasks");
+    mobileTasks = await response.json();
+  } catch {
+    mobileTasks = fallbackTasks;
+    showToast("โหลด backend ไม่ได้ แสดงข้อมูลตัวอย่างก่อน");
+  }
+  renderMobile();
+  openTaskFromQuery();
+  handleInviteFromQuery();
+}
+
+function handleInviteFromQuery() {
+  const inviteId = new URLSearchParams(window.location.search).get("invite");
+  if (!inviteId || pendingInviteOrganizationId === inviteId) return;
+  pendingInviteOrganizationId = inviteId;
+  renderInviteJoin(inviteId);
+}
+
+async function apiFetch(url, options = {}) {
+  const headers = {
+    ...(options.headers || {}),
+    ...(currentLineUserId ? { "x-line-user-id": currentLineUserId } : {})
+  };
+  return fetch(url, { ...options, headers });
+}
+
+async function loadTeamState() {
+  try {
+    const response = await apiFetch("/api/team/me");
+    if (!response.ok) throw new Error("Cannot load team");
+    teamState = { ...teamState, ...(await response.json()) };
+    if (teamState.memberships.length && !teamState.activeOrganization) {
+      teamState.activeOrganization = teamState.memberships[0].organization;
+      await loadOrganization(teamState.activeOrganization.id);
+    }
+    await loadMyKpi();
+    await loadAssigneeOptions();
+  } catch {
+    teamState = { user: null, memberships: [], activeOrganization: null, members: [] };
+  }
+}
+
+async function loadAssigneeOptions() {
+  try {
+    const response = await apiFetch("/api/team/assignees");
+    if (!response.ok) throw new Error("Cannot load assignees");
+    assigneeOptions = await response.json();
+  } catch {
+    assigneeOptions = [];
+  }
+}
+
+async function loadMyKpi() {
+  try {
+    const response = await apiFetch("/api/team/me/kpi");
+    if (!response.ok) throw new Error("Cannot load KPI");
+    myKpi = await response.json();
+  } catch {
+    myKpi = null;
+  }
+}
+
+async function loadOrganization(organizationId) {
+  const response = await apiFetch(`/api/team/organizations/${encodeURIComponent(organizationId)}`);
+  if (!response.ok) throw new Error("Cannot load organization");
+  const result = await response.json();
+  teamState.activeOrganization = result.organization;
+  teamState.members = result.members;
+}
+
+function openTaskFromQuery() {
+  const taskId = new URLSearchParams(window.location.search).get("task");
+  const action = new URLSearchParams(window.location.search).get("action");
+  if (!taskId) return;
+  const task = mobileTasks.find((currentTask) => currentTask.id === taskId);
+  if (task) {
+    openMobileDialog(task);
+    if (action === "reschedule") {
+      window.setTimeout(() => {
+        const dueDateInput = document.querySelector("#mobileTaskDueDate");
+        dueDateInput?.focus();
+        showToast("เลือกวันครบกำหนดใหม่ แล้วกดบันทึก");
+      }, 150);
+    }
+  }
+}
+
+async function saveTaskToApi(task, exists) {
+  const response = await fetch(exists ? `/api/tasks/${encodeURIComponent(task.id)}` : "/api/tasks", {
+    method: exists ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(task)
+  });
+  if (!response.ok) throw new Error("Cannot save task");
+  return response.json();
+}
+
+async function patchTaskToApi(taskId, patch) {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch)
+  });
+  if (!response.ok) throw new Error("Cannot update task");
+  return response.json();
+}
+
+function renderMobile() {
+  const today = new Date("2026-05-16T00:00:00+07:00");
+  const dueTasks = mobileTasks.filter((task) => {
+    const diff = (new Date(`${task.dueDate}T00:00:00+07:00`).getTime() - today.getTime()) / 86400000;
+    return task.status !== "done" && diff >= 0 && diff <= 3;
+  });
+  const mineTasks = mobileTasks.filter((task) => task.assignee.toLowerCase() === "narin");
+  const doneTasks = mobileTasks.filter((task) => task.status === "done");
+
+  const visibleTasks = getFilteredTasks({ dueTasks, mineTasks, doneTasks });
+  mobileElements.filterText.textContent = getFilterText();
+  mobileElements.sectionTitle.textContent = "ภาพรวมงานวันนี้";
+  mobileElements.sectionSubtitle.textContent = "จัดการงานสำคัญและบอร์ดของทีม";
+  mobileElements.taskList.innerHTML = renderDashboard({
+    tasks: visibleTasks,
+    dueTasks,
+    doneTasks
+  });
+
+  mobileElements.taskList.querySelectorAll("[data-edit-task]").forEach((button) => {
+    button.addEventListener("click", () => openMobileDialog(mobileTasks.find((task) => task.id === button.dataset.editTask)));
+  });
+
+  mobileElements.taskList.querySelectorAll("[data-done-task]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        const updatedTask = await patchTaskToApi(button.dataset.doneTask, {
+          status: "done",
+          activityText: "เปลี่ยนสถานะเป็นเสร็จแล้ว"
+        });
+        mobileTasks = mobileTasks.map((task) => (task.id === updatedTask.id ? updatedTask : task));
+        renderMobile();
+        showToast("อัปเดตงานเป็นเสร็จแล้ว");
+      } catch {
+        showToast("บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง");
+      }
+    });
+  });
+
+  mobileElements.taskList.querySelectorAll("[data-add-status]").forEach((button) => {
+    button.addEventListener("click", () => openMobileDialog({ ...createMobileTask(), status: button.dataset.addStatus }));
+  });
+  document.querySelector("#dailyLineButtonInline")?.addEventListener("click", pushSummaryToLine);
+}
+
+function renderDashboard({ tasks, dueTasks, doneTasks }) {
+  const todoTasks = mobileTasks.filter((task) => task.status === "todo");
+  const progressTasks = mobileTasks.filter((task) => task.status === "progress" || task.status === "review");
+  const completedTasks = mobileTasks.filter((task) => task.status === "done");
+  const total = mobileTasks.length || 1;
+  const progress = Math.round((completedTasks.length / total) * 100);
+  const importantTask = dueTasks[0] || progressTasks[0] || todoTasks[0] || mobileTasks[0];
+
+  return `
+    <div class="dashboard-grid">
+      <section class="hero-summary">
+        <h2>ภาพรวมงานวันนี้</h2>
+        <div class="summary-stats">
+          <div class="summary-stat todo"><span>ต้องทำ</span><strong>${todoTasks.length}</strong></div>
+          <div class="summary-stat progress"><span>กำลังทำ</span><strong>${progressTasks.length}</strong></div>
+          <div class="summary-stat done"><span>เสร็จแล้ว</span><strong>${completedTasks.length}</strong></div>
+        </div>
+        <div class="progress-track"><div class="progress-fill" style="width: ${progress}%"></div></div>
+        <div class="summary-foot"><span>ความคืบหน้าโดยรวม</span><strong>${progress}%</strong></div>
+      </section>
+
+      <section class="important-section">
+        <div class="section-title-row">
+          <h2>งานสำคัญของคุณ</h2>
+          <button class="view-all-link" type="button">ดูทั้งหมด ›</button>
+        </div>
+        ${importantTask ? renderFeaturedTask(importantTask) : `<p class="task-description">ยังไม่มีงานสำคัญ</p>`}
+      </section>
+
+      <section class="mini-board">
+        <div class="section-title-row">
+          <h2>บอร์ดงานของฉัน</h2>
+        </div>
+        <div class="board-columns">
+          ${renderMiniColumn("ต้องทำ", todoTasks, "todo")}
+          ${renderMiniColumn("กำลังทำ", progressTasks, "progress")}
+          ${renderMiniColumn("เสร็จแล้ว", completedTasks, "done")}
+        </div>
+      </section>
+
+      <section class="line-automation-card">
+        <div class="line-bubble">LINE</div>
+        <div>
+          <strong>ส่งอัปเดตงานผ่าน LINE อัตโนมัติ</strong>
+          <p class="task-description">แจ้งเตือนความคืบหน้าให้ทีมได้ทันที</p>
+        </div>
+        <button id="dailyLineButtonInline" class="view-all-link" type="button">ตั้งค่า ›</button>
+      </section>
+    </div>
+  `;
+}
+
+function renderFeaturedTask(task) {
+  const percent = task.status === "done" ? 100 : task.status === "progress" || task.status === "review" ? 65 : 20;
+  return `
+    <article class="featured-task-card">
+      <div class="featured-head">
+        <div class="featured-icon">📣</div>
+        <div>
+          <div class="task-title">${escapeMobileHtml(task.title)}</div>
+          <p class="task-description">${escapeMobileHtml(task.project || "โปรเจกต์ทั่วไป")}</p>
+        </div>
+        <div class="ring-progress" style="--progress: ${percent}%"><span>${percent}%</span></div>
+      </div>
+      <div class="featured-meta">
+        <span class="pill ${mobileStatusMeta[task.status].className}">${mobileStatusMeta[task.status].label}</span>
+        <span class="pill priority-${task.priority}">${mobilePriorityMeta[task.priority].label}</span>
+        <span class="pill status-todo">${formatMobileDate(task.dueDate)}</span>
+      </div>
+      <div class="task-bottom">
+        <span>ผู้รับผิดชอบ ${escapeMobileHtml(task.assignee)}</span>
+        <div class="task-actions">
+          <button data-edit-task="${task.id}" type="button">แก้ไข</button>
+          ${task.status !== "done" ? `<button data-done-task="${task.id}" type="button">ทำเสร็จ</button>` : ""}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderMiniColumn(title, tasks, status) {
+  return `
+    <div class="mini-column">
+      <h3>${title} <span class="count-pill">${tasks.length}</span></h3>
+      ${tasks
+        .slice(0, 3)
+        .map(
+          (task) => `
+            <div class="mini-task" data-edit-task="${task.id}">
+              <strong>${escapeMobileHtml(task.title)}</strong>
+              <span>${formatMobileDate(task.dueDate)}</span>
+            </div>
+          `
+        )
+        .join("")}
+      <button class="mini-add" data-add-status="${status}" type="button">+ เพิ่มงาน</button>
+    </div>
+  `;
+}
+
+function renderTeamSettings() {
+  mobileElements.sectionTitle.textContent = "ทีมและสมาชิก";
+  mobileElements.sectionSubtitle.textContent = teamState.activeOrganization
+    ? teamState.activeOrganization.name
+    : "สร้างทีมแรกของคุณ";
+
+  mobileElements.taskList.innerHTML = `
+    <article class="task-card">
+      <div class="task-title">ผู้ใช้ปัจจุบัน</div>
+      <p class="task-description">${escapeMobileHtml(teamState.user?.displayName || "ยังไม่ทราบชื่อ")}<br>${escapeMobileHtml(teamState.user?.lineUserId || "dev-user")}</p>
+    </article>
+
+    <article class="task-card">
+      <div class="task-title">สร้างทีม/องค์กร</div>
+      <div class="task-actions" style="margin-top: 12px;">
+        <input id="organizationNameInput" placeholder="เช่น ทีมขาย, BossBoard" style="flex: 1 1 180px; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px;" />
+        <button id="createOrganizationButton" type="button">สร้างทีม</button>
+      </div>
+    </article>
+
+    ${teamState.activeOrganization ? renderMembersPanel() : ""}
+  `;
+
+  document.querySelector("#createOrganizationButton")?.addEventListener("click", createOrganization);
+  document.querySelector("#inviteMemberButton")?.addEventListener("click", inviteMember);
+  document.querySelector("#copyInviteLinkButton")?.addEventListener("click", copyInviteLink);
+  document.querySelectorAll("[data-role-member]").forEach((select) => {
+    select.addEventListener("change", () => updateMemberRole(select.dataset.roleMember, select.value));
+  });
+  document.querySelectorAll("[data-view-profile]").forEach((button) => {
+    button.addEventListener("click", () => viewMemberProfile(button.dataset.viewProfile));
+  });
+}
+
+async function renderMyProfile() {
+  await loadTeamState();
+  renderProfilePage(teamState.user, myKpi, true);
+}
+
+function renderProfilePage(user, kpi, editable) {
+  mobileElements.sectionTitle.textContent = editable ? "โปรไฟล์ของฉัน" : "โปรไฟล์สมาชิก";
+  mobileElements.sectionSubtitle.textContent = user?.position || user?.department || "ข้อมูลผู้ใช้และ KPI";
+  const avatar = user?.avatarUrl || user?.pictureUrl || "";
+  mobileElements.taskList.innerHTML = `
+    <div class="dashboard-grid">
+      <section class="profile-card">
+        <div class="profile-head">
+          ${avatar ? `<img class="profile-avatar" src="${escapeMobileHtml(avatar)}" alt="avatar" />` : `<div class="profile-avatar">👤</div>`}
+          <div>
+            <div class="task-title">${escapeMobileHtml(user?.displayName || "ยังไม่ตั้งชื่อ")}</div>
+            <p class="task-description">${escapeMobileHtml(user?.department || "ยังไม่ระบุแผนก")} · ${escapeMobileHtml(user?.position || "ยังไม่ระบุตำแหน่ง")}</p>
+            <span class="pill status-progress">${editable ? "แก้ไขได้" : "ดู KPI"}</span>
+          </div>
+        </div>
+        ${editable ? renderProfileForm(user) : `<p class="task-description" style="margin-top: 14px;">${escapeMobileHtml(user?.bio || "ยังไม่มีข้อมูลแนะนำตัว")}</p>`}
+      </section>
+      ${renderKpiCard(kpi)}
+    </div>
+  `;
+  document.querySelector("#saveProfileButton")?.addEventListener("click", saveMyProfile);
+}
+
+function renderProfileForm(user) {
+  return `
+    <div class="profile-form">
+      <label>รูปโปรไฟล์ URL
+        <input id="profileAvatarInput" value="${escapeMobileHtml(user?.avatarUrl || user?.pictureUrl || "")}" placeholder="https://..." />
+      </label>
+      <label>ชื่อที่แสดง
+        <input id="profileNameInput" value="${escapeMobileHtml(user?.displayName || "")}" />
+      </label>
+      <div class="form-row">
+        <label>แผนก
+          <input id="profileDepartmentInput" value="${escapeMobileHtml(user?.department || "")}" placeholder="เช่น Marketing" />
+        </label>
+        <label>ตำแหน่ง
+          <input id="profilePositionInput" value="${escapeMobileHtml(user?.position || "")}" placeholder="เช่น Manager" />
+        </label>
+      </div>
+      <label>เบอร์โทร
+        <input id="profilePhoneInput" value="${escapeMobileHtml(user?.phone || "")}" />
+      </label>
+      <label>Bio
+        <textarea id="profileBioInput">${escapeMobileHtml(user?.bio || "")}</textarea>
+      </label>
+      <button id="saveProfileButton" class="save-button" type="button">บันทึกโปรไฟล์</button>
+    </div>
+  `;
+}
+
+function renderKpiCard(kpi) {
+  const safeKpi = kpi || { total: 0, done: 0, active: 0, overdue: 0, completionRate: 0, dueSoon: [] };
+  return `
+    <section class="profile-card">
+      <div class="section-title-row">
+        <h2>KPI งาน</h2>
+        <span class="pill priority-medium">${safeKpi.completionRate}% สำเร็จ</span>
+      </div>
+      <div class="kpi-grid">
+        <div class="kpi-item"><span>ทั้งหมด</span><strong>${safeKpi.total}</strong></div>
+        <div class="kpi-item"><span>เสร็จ</span><strong>${safeKpi.done}</strong></div>
+        <div class="kpi-item"><span>ค้าง</span><strong>${safeKpi.active}</strong></div>
+        <div class="kpi-item"><span>เลยกำหนด</span><strong>${safeKpi.overdue}</strong></div>
+      </div>
+      <div style="margin-top: 14px;">
+        ${(safeKpi.dueSoon || []).length ? safeKpi.dueSoon.map((task) => `<div class="mini-task"><strong>${escapeMobileHtml(task.title)}</strong><span>${formatMobileDate(task.dueDate)}</span></div>`).join("") : `<p class="task-description">ยังไม่มีงานใกล้ครบกำหนด</p>`}
+      </div>
+    </section>
+  `;
+}
+
+async function saveMyProfile() {
+  const payload = {
+    avatarUrl: document.querySelector("#profileAvatarInput").value.trim(),
+    displayName: document.querySelector("#profileNameInput").value.trim(),
+    department: document.querySelector("#profileDepartmentInput").value.trim(),
+    position: document.querySelector("#profilePositionInput").value.trim(),
+    phone: document.querySelector("#profilePhoneInput").value.trim(),
+    bio: document.querySelector("#profileBioInput").value.trim()
+  };
+  const response = await apiFetch("/api/team/me/profile", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    showToast("บันทึกโปรไฟล์ไม่สำเร็จ");
+    return;
+  }
+  teamState.user = await response.json();
+  showToast("บันทึกโปรไฟล์แล้ว");
+  renderProfilePage(teamState.user, myKpi, true);
+}
+
+function getInviteLink() {
+  if (!teamState.activeOrganization) return "";
+  return `https://miniapp.line.me/2010109340-Oj89MY4l?invite=${encodeURIComponent(teamState.activeOrganization.id)}`;
+}
+
+function renderMembersPanel() {
+  return `
+    <article class="task-card">
+      <div class="task-title">${escapeMobileHtml(teamState.activeOrganization.name)}</div>
+      <p class="task-description">ส่งลิงก์เชิญให้เพื่อนใน LINE หรือเพิ่มสมาชิกด้วย LINE user id</p>
+      <div class="task-actions" style="margin-top: 12px;">
+        <input id="inviteLinkInput" value="${escapeMobileHtml(getInviteLink())}" readonly style="flex: 1 1 220px; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px;" />
+        <button id="copyInviteLinkButton" type="button">คัดลอกลิงก์เชิญ</button>
+      </div>
+      <div class="task-actions" style="margin-top: 12px;">
+        <input id="memberNameInput" placeholder="ชื่อสมาชิก" style="flex: 1 1 120px; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px;" />
+        <input id="memberLineIdInput" placeholder="LINE user id" style="flex: 1 1 160px; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px;" />
+        <select id="memberRoleInput" style="min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px;">
+          <option>Member</option>
+          <option>Manager</option>
+          <option>Admin</option>
+        </select>
+        <button id="inviteMemberButton" type="button">เชิญ</button>
+      </div>
+    </article>
+    <section class="task-list">
+      ${teamState.members.length ? teamState.members.map(renderMemberCard).join("") : `<article class="task-card"><p class="task-description">ยังไม่มีสมาชิก</p></article>`}
+    </section>
+  `;
+}
+
+async function copyInviteLink() {
+  const link = getInviteLink();
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast("คัดลอกลิงก์เชิญแล้ว");
+  } catch {
+    const input = document.querySelector("#inviteLinkInput");
+    input?.select();
+    showToast("คัดลอกไม่ได้ ให้กดค้างที่ลิงก์เพื่อ copy");
+  }
+}
+
+function renderInviteJoin(organizationId) {
+  document.querySelectorAll(".bottom-nav button").forEach((item) => item.classList.remove("active"));
+  mobileElements.sectionTitle.textContent = "คำเชิญเข้าร่วมทีม";
+  mobileElements.sectionSubtitle.textContent = "เปิดผ่าน LINE แล้วกดเข้าร่วมได้เลย";
+  mobileElements.taskList.innerHTML = `
+    <article class="task-card">
+      <div class="task-title">คุณได้รับคำเชิญ</div>
+      <p class="task-description">เข้าร่วมทีม ID: ${escapeMobileHtml(organizationId)}<br>ระบบจะใช้บัญชี LINE ปัจจุบันของคุณเป็นสมาชิกทีม</p>
+      <div class="task-actions" style="margin-top: 12px;">
+        <button id="joinTeamButton" type="button">เข้าร่วมทีม</button>
+        <button id="cancelJoinButton" type="button">ไว้ก่อน</button>
+      </div>
+    </article>
+  `;
+  document.querySelector("#joinTeamButton")?.addEventListener("click", () => joinInvitedTeam(organizationId));
+  document.querySelector("#cancelJoinButton")?.addEventListener("click", () => {
+    pendingInviteOrganizationId = "";
+    window.history.replaceState({}, "", window.location.pathname);
+    renderMobile();
+  });
+}
+
+async function joinInvitedTeam(organizationId) {
+  const response = await apiFetch(`/api/team/organizations/${encodeURIComponent(organizationId)}/join`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" }
+  });
+  if (!response.ok) {
+    showToast("เข้าร่วมทีมไม่สำเร็จ");
+    return;
+  }
+  await loadTeamState();
+  pendingInviteOrganizationId = "";
+  window.history.replaceState({}, "", window.location.pathname);
+  renderTeamSettings();
+  showToast("เข้าร่วมทีมแล้ว");
+}
+
+function renderMemberCard(member) {
+  return `
+    <article class="task-card">
+      <button class="member-card-button" data-view-profile="${member.user?.id || ""}" type="button">
+      <div class="task-top">
+        <div>
+          <div class="task-title">${escapeMobileHtml(member.user?.displayName || "Unnamed")}</div>
+          <p class="task-description">${escapeMobileHtml(member.user?.lineUserId || "-")}</p>
+        </div>
+        <span class="pill status-progress">${escapeMobileHtml(member.status)}</span>
+      </div>
+      </button>
+      <div class="task-actions">
+        <select data-role-member="${member.id}" style="min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px;">
+          ${["Admin", "Manager", "Member"].map((role) => `<option ${member.role === role ? "selected" : ""}>${role}</option>`).join("")}
+        </select>
+      </div>
+    </article>
+  `;
+}
+
+async function viewMemberProfile(userId) {
+  if (!userId) return;
+  const response = await apiFetch(`/api/team/users/${encodeURIComponent(userId)}/profile`);
+  if (!response.ok) {
+    showToast("คุณไม่มีสิทธิ์ดูโปรไฟล์นี้");
+    return;
+  }
+  const result = await response.json();
+  renderProfilePage(result.user, result.kpi, result.user.id === teamState.user?.id);
+}
+
+async function createOrganization() {
+  const input = document.querySelector("#organizationNameInput");
+  const name = input.value.trim();
+  if (!name) {
+    showToast("กรุณาใส่ชื่อทีม");
+    return;
+  }
+  const response = await apiFetch("/api/team/organizations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  });
+  if (!response.ok) {
+    showToast("สร้างทีมไม่สำเร็จ");
+    return;
+  }
+  await loadTeamState();
+  renderTeamSettings();
+  showToast("สร้างทีมแล้ว");
+}
+
+async function inviteMember() {
+  const displayName = document.querySelector("#memberNameInput").value.trim();
+  const lineUserId = document.querySelector("#memberLineIdInput").value.trim();
+  const role = document.querySelector("#memberRoleInput").value;
+  if (!displayName && !lineUserId) {
+    showToast("กรุณาใส่ชื่อหรือ LINE user id");
+    return;
+  }
+  const response = await apiFetch(`/api/team/organizations/${encodeURIComponent(teamState.activeOrganization.id)}/members`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ displayName, lineUserId, role })
+  });
+  if (!response.ok) {
+    showToast("เชิญสมาชิกไม่สำเร็จ");
+    return;
+  }
+  await loadOrganization(teamState.activeOrganization.id);
+  renderTeamSettings();
+  showToast("เพิ่มสมาชิกแล้ว");
+}
+
+async function updateMemberRole(memberId, role) {
+  const response = await apiFetch(`/api/team/members/${encodeURIComponent(memberId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role })
+  });
+  if (!response.ok) {
+    showToast("เปลี่ยนสิทธิ์ไม่สำเร็จ");
+    return;
+  }
+  await loadOrganization(teamState.activeOrganization.id);
+  renderTeamSettings();
+  showToast("เปลี่ยนสิทธิ์แล้ว");
+}
+
+function getFilteredTasks(groups) {
+  if (activeFilter === "due") return groups.dueTasks;
+  if (activeFilter === "mine") return groups.mineTasks;
+  if (activeFilter === "done") return groups.doneTasks;
+  return mobileTasks;
+}
+
+function getFilterText() {
+  if (activeFilter === "due") return "งานที่ควรรีบดู";
+  if (activeFilter === "mine") return "งานที่มอบหมายให้ Narin";
+  if (activeFilter === "done") return "งานที่ปิดแล้ว";
+  return "แสดงงานทั้งหมด";
+}
+
+function renderMobileCard(task) {
+  return `
+    <article class="task-card">
+      <div class="task-top">
+        <span class="pill ${mobileStatusMeta[task.status].className}">${mobileStatusMeta[task.status].label}</span>
+        <span class="pill ${mobilePriorityMeta[task.priority].className}">${mobilePriorityMeta[task.priority].label}</span>
+      </div>
+      <div class="task-title">${escapeMobileHtml(task.title)}</div>
+      <p class="task-description">${escapeMobileHtml(task.description || "ไม่มีรายละเอียด")}</p>
+      <div class="task-bottom">
+        <span>${escapeMobileHtml(task.assignee)}</span>
+        <span>${formatMobileDate(task.dueDate)}</span>
+      </div>
+      <div class="task-actions" style="margin-top: 12px;">
+        <button data-edit-task="${task.id}" type="button">แก้ไข</button>
+        ${task.status !== "done" ? `<button data-done-task="${task.id}" type="button">ทำเสร็จ</button>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function openMobileDialog(task) {
+  document.querySelector("#mobileTaskId").value = task.id;
+  document.querySelector("#mobileTaskTitle").value = task.title;
+  document.querySelector("#mobileTaskDescription").value = task.description;
+  renderAssigneeSelect(task);
+  document.querySelector("#mobileTaskDueDate").value = task.dueDate;
+  document.querySelector("#mobileTaskStatus").value = task.status;
+  document.querySelector("#mobileTaskPriority").value = task.priority;
+  mobileElements.taskDialog.showModal();
+}
+
+function renderAssigneeSelect(task) {
+  const select = document.querySelector("#mobileTaskAssigneeUserId");
+  const fallbackName = task.assignee || teamState.user?.displayName || "Unassigned";
+  const options = assigneeOptions.length
+    ? assigneeOptions
+    : teamState.user
+      ? [{ user: teamState.user, organizationId: teamState.activeOrganization?.id || "" }]
+      : [];
+  select.innerHTML = [
+    `<option value="" data-name="${escapeMobileHtml(fallbackName)}">ไม่ระบุ / ${escapeMobileHtml(fallbackName)}</option>`,
+    ...options.map(
+      (item) =>
+        `<option value="${escapeMobileHtml(item.user.id)}" data-name="${escapeMobileHtml(item.user.displayName)}" data-organization="${escapeMobileHtml(item.organizationId || "")}" ${
+          task.assigneeUserId === item.user.id ? "selected" : ""
+        }>${escapeMobileHtml(item.user.displayName)}${item.role ? ` · ${escapeMobileHtml(item.role)}` : ""}</option>`
+    )
+  ].join("");
+}
+
+async function saveMobileTask(event) {
+  event.preventDefault();
+  const task = {
+    id: document.querySelector("#mobileTaskId").value,
+    title: document.querySelector("#mobileTaskTitle").value.trim() || "Untitled task",
+    description: document.querySelector("#mobileTaskDescription").value.trim(),
+    project: "LINE Mobile",
+    assignee: document.querySelector("#mobileTaskAssigneeUserId").selectedOptions[0]?.dataset.name || "Unassigned",
+    assigneeUserId: document.querySelector("#mobileTaskAssigneeUserId").value,
+    organizationId: document.querySelector("#mobileTaskAssigneeUserId").selectedOptions[0]?.dataset.organization || "",
+    dueDate: document.querySelector("#mobileTaskDueDate").value,
+    status: document.querySelector("#mobileTaskStatus").value,
+    priority: document.querySelector("#mobileTaskPriority").value,
+    tags: ["LIFF"],
+    activity: []
+  };
+
+  const exists = mobileTasks.some((currentTask) => currentTask.id === task.id);
+  try {
+    const savedTask = await saveTaskToApi(task, exists);
+    mobileTasks = exists
+      ? mobileTasks.map((currentTask) => (currentTask.id === savedTask.id ? savedTask : currentTask))
+      : [savedTask, ...mobileTasks];
+    mobileElements.taskDialog.close();
+    renderMobile();
+    showToast("บันทึกงานแล้ว");
+  } catch {
+    showToast("บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง");
+  }
+}
+
+function createMobileTask() {
+  return {
+    id: `task-${Date.now()}`,
+    title: "",
+    description: "",
+    project: "LINE Mobile",
+    assignee: teamState.user?.displayName || "Narin",
+    assigneeUserId: teamState.user?.id || "",
+    organizationId: teamState.activeOrganization?.id || "",
+    dueDate: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+    status: "todo",
+    priority: "medium",
+    tags: ["LIFF"],
+    activity: []
+  };
+}
+
+function showToast(message) {
+  mobileElements.toast.textContent = message;
+  mobileElements.toast.classList.remove("hidden");
+  window.setTimeout(() => mobileElements.toast.classList.add("hidden"), 2200);
+}
+
+function formatMobileDate(value) {
+  return new Intl.DateTimeFormat("th-TH", {
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  }).format(new Date(`${value}T00:00:00+07:00`));
+}
+
+function escapeMobileHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}

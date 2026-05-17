@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LineTask Mobile</title>
+    <link rel="stylesheet" href="./static/line.css" />
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/versions/2.22.3/sdk.js"></script>
+  </head>
+  <body>
+    <main class="phone-app">
+      <header class="app-header">
+        <button class="menu-button" type="button" aria-label="Menu">☰</button>
+        <div>
+          <p class="eyebrow">LineTask</p>
+          <h1><span>Boss</span>Board</h1>
+          <p class="tagline">จัดการงาน โปรเจกต์ เป๊ะทุกขั้นตอน</p>
+        </div>
+        <div class="header-actions">
+          <button class="round-button" type="button" aria-label="Notifications">🔔</button>
+          <div class="profile-dot">👤</div>
+        </div>
+      </header>
+
+      <section class="line-status-card">
+        <div>
+          <strong id="lineStatusTitle">กำลังตรวจสอบ LINE</strong>
+          <p id="lineStatusText">กำลังโหลดการตั้งค่า LIFF และ Messaging API</p>
+        </div>
+        <button id="lineLoginButton" class="status-action-button hidden" type="button">เข้า LINE</button>
+      </section>
+
+      <section class="section-header">
+        <div>
+          <h2>ตารางงาน</h2>
+          <p id="filterText">แสดงงานทั้งหมด</p>
+        </div>
+        <button id="newMobileTaskButton" class="add-button" type="button">+ เพิ่มงาน</button>
+      </section>
+
+      <section id="taskList" class="task-list"></section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="active" type="button">สรุป</button>
+      <button type="button">บอร์ด</button>
+      <button type="button">ปฏิทิน</button>
+      <button type="button">โปรไฟล์</button>
+      <button type="button">ตั้งค่า</button>
+    </nav>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <dialog id="taskDialog" class="task-dialog">
+      <form id="mobileTaskForm" method="dialog">
+        <div class="dialog-header">
+          <h2>เพิ่ม/แก้งาน</h2>
+          <button id="closeDialogButton" class="round-button" type="button">×</button>
+        </div>
+        <input id="mobileTaskId" type="hidden" />
+        <label>
+          ชื่องาน
+          <input id="mobileTaskTitle" required />
+        </label>
+        <label>
+          รายละเอียด
+          <textarea id="mobileTaskDescription"></textarea>
+        </label>
+        <div class="form-row">
+          <label>
+            ผู้รับผิดชอบ
+            <select id="mobileTaskAssigneeUserId"></select>
+          </label>
+          <label>
+            วันครบกำหนด
+            <input id="mobileTaskDueDate" type="date" required />
+          </label>
+        </div>
+        <div class="form-row">
+          <label>
+            สถานะ
+            <select id="mobileTaskStatus">
+              <option value="todo">รอทำ</option>
+              <option value="progress">กำลังทำ</option>
+              <option value="review">รอตรวจ</option>
+              <option value="done">เสร็จแล้ว</option>
+            </select>
+          </label>
+          <label>
+            ความสำคัญ
+            <select id="mobileTaskPriority">
+              <option value="high">ด่วน</option>
+              <option value="medium">ปกติ</option>
+              <option value="low">ต่ำ</option>
+            </select>
+          </label>
+        </div>
+        <button class="save-button" type="submit">บันทึก</button>
+      </form>
+    </dialog>
+
+    <script src="./static/line.js"></script>
+  </body>
+</html>
