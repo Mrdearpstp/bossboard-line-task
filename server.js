@@ -1066,7 +1066,12 @@ async function upsertAppUserFromLineProfile(profile) {
 
 async function getCurrentUser(request) {
   const url = new URL(request.url || "/", `http://${host}:${port}`);
-  const lineUserId = request.headers["x-line-user-id"] || url.searchParams.get("lineUserId") || "dev-user";
+  const requestedLineUserId = request.headers["x-line-user-id"] || url.searchParams.get("lineUserId");
+  const requestHost = String(request.headers.host || "");
+  const isLocalRequest = requestHost.startsWith("localhost") || requestHost.startsWith("127.0.0.1");
+  if (!requestedLineUserId && !isLocalRequest) return null;
+
+  const lineUserId = requestedLineUserId || "dev-user";
   const users = await readJsonFile(usersFile, []);
   let user = users.find((item) => item.lineUserId === lineUserId);
   if (!user) {
@@ -1160,6 +1165,10 @@ async function handleTeamApi(request, response) {
   try {
     const url = new URL(request.url || "/", `http://${host}:${port}`);
     const currentUser = await getCurrentUser(request);
+    if (!currentUser) {
+      sendJson(response, 401, { error: "LINE user is required" });
+      return;
+    }
 
     if (request.method === "GET" && url.pathname === "/api/team/me") {
       sendJson(response, 200, {
@@ -1630,6 +1639,10 @@ async function handleTasksApi(request, response) {
     const url = new URL(request.url || "/", `http://${host}:${port}`);
     const id = decodeURIComponent(url.pathname.replace("/api/tasks", "").replace(/^\/+/, ""));
     const currentUser = await getCurrentUser(request);
+    if (!currentUser) {
+      sendJson(response, 401, { error: "LINE user is required" });
+      return;
+    }
     const organizationIds = await getOrganizationIdsForUser(currentUser.id);
 
     if (request.method === "GET" && !id) {
