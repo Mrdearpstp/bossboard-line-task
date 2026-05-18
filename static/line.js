@@ -66,6 +66,7 @@ let pendingInviteOrganizationId = "";
 let myKpi = null;
 let myTasksFilter = "today";
 let selectedProjectName = "";
+let reminderSettings = null;
 
 const mobileElements = {
   taskList: document.querySelector("#taskList"),
@@ -189,6 +190,47 @@ async function pushSummaryToLine() {
     const openTasks = mobileTasks.filter((task) => task.status !== "done").length;
     showToast(`ยังส่งจริงไม่ได้: ${error.message || "ต้องตั้งค่า LINE token"} | งานค้าง ${openTasks} งาน`);
   }
+}
+
+async function loadReminderSettings() {
+  try {
+    const response = await apiFetch("/api/line/reminder-settings");
+    if (!response.ok) throw new Error("Cannot load reminder settings");
+    reminderSettings = await response.json();
+  } catch {
+    reminderSettings = {
+      enabled: true,
+      dailySummaryEnabled: true,
+      dailySummaryTime: "08:30",
+      dueSoonEnabled: true,
+      dueSoonDays: 1,
+      dueSoonTime: "18:00",
+      overdueEnabled: true,
+      reminderTime: "09:00",
+      quietHoursEnabled: false,
+      quietStart: "22:00",
+      quietEnd: "08:00"
+    };
+  }
+}
+
+async function saveReminderSettings(payload) {
+  const response = await apiFetch("/api/line/reminder-settings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) throw new Error("Cannot save reminder settings");
+  reminderSettings = await response.json();
+  return reminderSettings;
+}
+
+async function sendTestReminder() {
+  const response = await apiFetch("/api/line/test-reminder", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" }
+  });
+  if (!response.ok) throw new Error("Cannot send test reminder");
 }
 
 async function loadMobileTasks() {
@@ -682,54 +724,113 @@ function renderCreateTaskPage(seedTask = createMobileTask()) {
   });
 }
 
-function renderPersonalSettings() {
+async function renderPersonalSettings() {
   document.body.dataset.view = "settings";
-  mobileElements.sectionTitle.textContent = "ตั้งค่างานส่วนตัว";
-  mobileElements.sectionSubtitle.textContent = "โหมดนี้แยกข้อมูลตามบัญชี LINE ของแต่ละคน";
+  mobileElements.sectionTitle.textContent = "แจ้งเตือน LINE";
+  mobileElements.sectionSubtitle.textContent = "ตั้งเวลาให้ BossBoard เตือนงานส่วนตัวของคุณ";
+  await loadReminderSettings();
+  const settings = reminderSettings || {};
 
   mobileElements.taskList.innerHTML = `
     <div class="dashboard-grid">
-      <article class="profile-card">
+      <article class="profile-card reminder-hero-card">
         <div class="section-title-row">
           <h2>บัญชี LINE นี้</h2>
-          <span class="pill status-done">ส่วนตัว</span>
+          <span class="pill ${settings.enabled ? "status-done" : "status-todo"}">${settings.enabled ? "เปิดเตือน" : "ปิดเตือน"}</span>
         </div>
         <p class="task-description">${escapeMobileHtml(teamState.user?.displayName || "ยังไม่ทราบชื่อ")}<br>${escapeMobileHtml(teamState.user?.lineUserId || currentLineUserId || "เปิดผ่าน LINE เพื่อระบุตัวตน")}</p>
         <div class="task-actions" style="margin-top: 14px;">
-          <button type="button" id="openProfileFromSettings">แก้โปรไฟล์</button>
-          <button type="button" id="backToDashboardFromSettings">กลับหน้าหลัก</button>
+          <button type="button" id="sendTestReminderButton">ทดสอบส่ง LINE</button>
+          <button type="button" id="pushSummaryButton">ส่งสรุปตอนนี้</button>
         </div>
       </article>
 
-      <article class="profile-card">
+      <form id="reminderSettingsForm" class="profile-card reminder-settings-form">
         <div class="section-title-row">
-          <h2>การใช้งานตอนนี้</h2>
-          <span class="pill priority-medium">Single user</span>
+          <h2>รอบแจ้งเตือน</h2>
+          <label class="switch-row compact-switch">
+            <input id="reminderEnabledInput" type="checkbox" ${settings.enabled ? "checked" : ""} />
+            <span>เปิดใช้งาน</span>
+          </label>
         </div>
-        <div class="kpi-grid">
-          <div class="kpi-item"><span>งานทั้งหมด</span><strong>${mobileTasks.length}</strong></div>
-          <div class="kpi-item"><span>ยังไม่เสร็จ</span><strong>${mobileTasks.filter((task) => task.status !== "done").length}</strong></div>
-          <div class="kpi-item"><span>เสร็จแล้ว</span><strong>${mobileTasks.filter((task) => task.status === "done").length}</strong></div>
-          <div class="kpi-item"><span>ใกล้ครบกำหนด</span><strong>${mobileTasks.filter((task) => {
-            const diff = (new Date(`${task.dueDate}T00:00:00+07:00`).getTime() - Date.now()) / 86400000;
-            return task.status !== "done" && diff >= 0 && diff <= 3;
-          }).length}</strong></div>
+        <div class="reminder-grid">
+          <label class="switch-row">
+            <input id="dailySummaryEnabledInput" type="checkbox" ${settings.dailySummaryEnabled ? "checked" : ""} />
+            <span>สรุปรายวัน</span>
+            <input id="dailySummaryTimeInput" type="time" value="${escapeMobileHtml(settings.dailySummaryTime || "08:30")}" />
+          </label>
+          <label class="switch-row">
+            <input id="dueSoonEnabledInput" type="checkbox" ${settings.dueSoonEnabled ? "checked" : ""} />
+            <span>เตือนก่อนครบกำหนด</span>
+            <div class="inline-setting">
+              <input id="dueSoonDaysInput" type="number" min="0" max="7" value="${escapeMobileHtml(settings.dueSoonDays ?? 1)}" />
+              <small>วัน</small>
+              <input id="dueSoonTimeInput" type="time" value="${escapeMobileHtml(settings.dueSoonTime || "18:00")}" />
+            </div>
+          </label>
+          <label class="switch-row">
+            <input id="overdueEnabledInput" type="checkbox" ${settings.overdueEnabled ? "checked" : ""} />
+            <span>เตือนงานเลยกำหนด</span>
+            <input id="reminderTimeInput" type="time" value="${escapeMobileHtml(settings.reminderTime || "09:00")}" />
+          </label>
+          <label class="switch-row">
+            <input id="quietHoursEnabledInput" type="checkbox" ${settings.quietHoursEnabled ? "checked" : ""} />
+            <span>งดแจ้งช่วงพัก</span>
+            <div class="inline-setting">
+              <input id="quietStartInput" type="time" value="${escapeMobileHtml(settings.quietStart || "22:00")}" />
+              <small>ถึง</small>
+              <input id="quietEndInput" type="time" value="${escapeMobileHtml(settings.quietEnd || "08:00")}" />
+            </div>
+          </label>
         </div>
-        <p class="task-description" style="margin-top: 14px;">ตอนนี้ทุกคนที่เปิดผ่าน LINE OA จะเห็นเฉพาะงานของตัวเอง ทีมและสมาชิกยังเก็บไว้เป็นฟีเจอร์อนาคต</p>
-      </article>
+        <button class="save-button" type="submit">บันทึกการแจ้งเตือน</button>
+        <p class="task-description">หมายเหตุ: บน Render Free ระบบจะส่งตามเวลาที่ตั้งไว้เมื่อ server ตื่นอยู่ ถ้าเครื่องหลับ อาจส่งหลังจากมีคนเปิดแอปหรือมี webhook เข้า</p>
+      </form>
 
       <article class="profile-card future-team-card">
         <div class="section-title-row">
-          <h2>ทีมและสมาชิก</h2>
-          <span class="pill status-review">ไว้เฟสถัดไป</span>
+          <h2>งานของคุณตอนนี้</h2>
+          <span class="pill priority-medium">${mobileTasks.filter((task) => task.status !== "done").length} งานค้าง</span>
         </div>
-        <p class="task-description">ระบบทีมยังอยู่ในโค้ด แต่ซ่อนจาก flow หลักก่อน เพื่อให้แอปเป็นผู้ช่วยส่วนตัวใน LINE ที่ใช้ง่ายและไม่สับสน</p>
+        <p class="task-description">ระบบจะแจ้งเฉพาะงานที่เป็นของบัญชี LINE นี้ และจะไม่ส่งงานของคนอื่นมาปนกัน</p>
       </article>
     </div>
   `;
 
-  document.querySelector("#openProfileFromSettings")?.addEventListener("click", renderMyProfile);
-  document.querySelector("#backToDashboardFromSettings")?.addEventListener("click", renderMobile);
+  document.querySelector("#reminderSettingsForm")?.addEventListener("submit", saveReminderSettingsFromForm);
+  document.querySelector("#sendTestReminderButton")?.addEventListener("click", async () => {
+    try {
+      await sendTestReminder();
+      showToast("ส่งทดสอบเข้า LINE แล้ว");
+    } catch {
+      showToast("ส่งทดสอบไม่สำเร็จ ตรวจสอบว่าเพิ่ม OA เป็นเพื่อนแล้ว");
+    }
+  });
+  document.querySelector("#pushSummaryButton")?.addEventListener("click", pushSummaryToLine);
+}
+
+async function saveReminderSettingsFromForm(event) {
+  event.preventDefault();
+  const payload = {
+    enabled: document.querySelector("#reminderEnabledInput").checked,
+    dailySummaryEnabled: document.querySelector("#dailySummaryEnabledInput").checked,
+    dailySummaryTime: document.querySelector("#dailySummaryTimeInput").value || "08:30",
+    dueSoonEnabled: document.querySelector("#dueSoonEnabledInput").checked,
+    dueSoonDays: Number(document.querySelector("#dueSoonDaysInput").value || 1),
+    dueSoonTime: document.querySelector("#dueSoonTimeInput").value || "18:00",
+    overdueEnabled: document.querySelector("#overdueEnabledInput").checked,
+    reminderTime: document.querySelector("#reminderTimeInput").value || "09:00",
+    quietHoursEnabled: document.querySelector("#quietHoursEnabledInput").checked,
+    quietStart: document.querySelector("#quietStartInput").value || "22:00",
+    quietEnd: document.querySelector("#quietEndInput").value || "08:00"
+  };
+  try {
+    await saveReminderSettings(payload);
+    showToast("บันทึกการแจ้งเตือนแล้ว");
+    renderPersonalSettings();
+  } catch {
+    showToast("บันทึกการแจ้งเตือนไม่สำเร็จ");
+  }
 }
 
 function renderProjectsPage() {

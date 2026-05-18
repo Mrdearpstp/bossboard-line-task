@@ -13,6 +13,7 @@ const lineTargetsFile = path.join(dataDir, "line-targets.json");
 const usersFile = path.join(dataDir, "users.json");
 const organizationsFile = path.join(dataDir, "organizations.json");
 const membersFile = path.join(dataDir, "members.json");
+const reminderSettingsFile = path.join(dataDir, "reminder-settings.json");
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
 let databaseReady = false;
@@ -143,7 +144,8 @@ async function ensureDatabase() {
       ["lineTargets", []],
       ["users", []],
       ["organizations", []],
-      ["members", []]
+      ["members", []],
+      ["reminderSettings", []]
     ];
     for (const [key, fallback] of stateKeys) {
       const existingValue = await readSupabaseState(key, null);
@@ -185,6 +187,11 @@ async function ensureDatabase() {
     await fsp.access(membersFile);
   } catch {
     await writeJsonFile(membersFile, []);
+  }
+  try {
+    await fsp.access(reminderSettingsFile);
+  } catch {
+    await writeJsonFile(reminderSettingsFile, []);
   }
   databaseReady = true;
 }
@@ -234,6 +241,7 @@ function getStateKeyForFile(filePath) {
     [path.basename(usersFile)]: "users",
     [path.basename(organizationsFile)]: "organizations",
     [path.basename(membersFile)]: "members",
+    [path.basename(reminderSettingsFile)]: "reminderSettings",
     [path.basename(tasksFile)]: "tasks"
   };
   return stateKeys[normalizedPath] || normalizedPath.replace(/\.json$/i, "");
@@ -331,6 +339,45 @@ function normalizeTask(input, existingTask) {
     tags: Array.isArray(input.tags) ? input.tags.map(String).map((tag) => tag.trim()).filter(Boolean) : [],
     activity: Array.isArray(input.activity) ? input.activity : existingTask?.activity || []
   };
+}
+
+function normalizeReminderSettings(input = {}, existing = {}) {
+  const reminderTime = String(input.reminderTime || existing.reminderTime || "09:00").slice(0, 5);
+  const dueSoonTime = String(input.dueSoonTime || existing.dueSoonTime || reminderTime || "09:00").slice(0, 5);
+  const dailySummaryTime = String(input.dailySummaryTime || existing.dailySummaryTime || "08:30").slice(0, 5);
+  return {
+    lineUserId: String(input.lineUserId || existing.lineUserId || ""),
+    enabled: input.enabled ?? existing.enabled ?? true,
+    dailySummaryEnabled: input.dailySummaryEnabled ?? existing.dailySummaryEnabled ?? true,
+    dailySummaryTime,
+    dueSoonEnabled: input.dueSoonEnabled ?? existing.dueSoonEnabled ?? true,
+    dueSoonDays: Math.max(0, Math.min(7, Number(input.dueSoonDays ?? existing.dueSoonDays ?? 1))),
+    dueSoonTime,
+    overdueEnabled: input.overdueEnabled ?? existing.overdueEnabled ?? true,
+    reminderTime,
+    quietHoursEnabled: input.quietHoursEnabled ?? existing.quietHoursEnabled ?? false,
+    quietStart: String(input.quietStart || existing.quietStart || "22:00").slice(0, 5),
+    quietEnd: String(input.quietEnd || existing.quietEnd || "08:00").slice(0, 5),
+    sent: input.sent && typeof input.sent === "object" ? input.sent : existing.sent || {},
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function getReminderSettingsForUser(user) {
+  const allSettings = await readJsonFile(reminderSettingsFile, []);
+  const existing = allSettings.find((item) => item.lineUserId === user.lineUserId);
+  return normalizeReminderSettings({ lineUserId: user.lineUserId }, existing);
+}
+
+async function saveReminderSettingsForUser(user, input) {
+  const allSettings = await readJsonFile(reminderSettingsFile, []);
+  const existing = allSettings.find((item) => item.lineUserId === user.lineUserId);
+  const settings = normalizeReminderSettings({ ...input, lineUserId: user.lineUserId }, existing);
+  const nextSettings = existing
+    ? allSettings.map((item) => (item.lineUserId === user.lineUserId ? settings : item))
+    : [settings, ...allSettings];
+  await writeJsonFile(reminderSettingsFile, nextSettings);
+  return settings;
 }
 
 function loadEnvFile() {
@@ -1010,6 +1057,111 @@ async function pushLineMessages(to, messages) {
   });
 }
 
+function buildReminderText(user, tasks, title = "แจ้งเตือนงานจาก BossBoard") {
+  const openTasks = tasks.filter((task) => task.status !== "done");
+  const lines = [
+    title,
+    `คุณมีงานที่ต้องติดตาม ${openTasks.length} งาน`
+  ];
+  openTasks.slice(0, 5).forEach((task, index) => {
+    lines.push(`${index + 1}. ${task.title} (${task.dueDate})`);
+  });
+  const appUrl = getAppUrl("/line.html");
+  lines.push("");
+  lines.push(`เปิดแอป: ${appUrl}`);
+  return lines.join("\n");
+}
+
+function getBangkokParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    dateKey: `${values.year}-${values.month}-${values.day}`,
+    timeKey: `${values.hour}:${values.minute}`
+  };
+}
+
+function getDateDiffInDays(dateA, dateB) {
+  const start = new Date(`${dateA}T00:00:00+07:00`).getTime();
+  const end = new Date(`${dateB}T00:00:00+07:00`).getTime();
+  return Math.round((start - end) / 86400000);
+}
+
+function isWithinQuietHours(settings, timeKey) {
+  if (!settings.quietHoursEnabled) return false;
+  const current = timeKey.replace(":", "");
+  const start = settings.quietStart.replace(":", "");
+  const end = settings.quietEnd.replace(":", "");
+  if (start < end) return current >= start && current < end;
+  return current >= start || current < end;
+}
+
+function shouldSendReminder(settings, bucket, dateKey) {
+  return settings.sent?.[bucket] !== dateKey;
+}
+
+async function markReminderSent(user, settings, bucket, dateKey) {
+  await saveReminderSettingsForUser(user, {
+    ...settings,
+    sent: {
+      ...(settings.sent || {}),
+      [bucket]: dateKey
+    }
+  });
+}
+
+async function sendReminderToUser(user, tasks, title, bucket, dateKey) {
+  if (!user.lineUserId || user.lineUserId === "dev-user" || !tasks.length) return;
+  await pushLine(user.lineUserId, buildReminderText(user, tasks, title));
+  const settings = await getReminderSettingsForUser(user);
+  await markReminderSent(user, settings, bucket, dateKey);
+}
+
+let reminderTickRunning = false;
+
+async function runReminderTick() {
+  if (reminderTickRunning) return;
+  reminderTickRunning = true;
+  try {
+    const { dateKey, timeKey } = getBangkokParts();
+    const [users, tasks] = await Promise.all([readJsonFile(usersFile, []), readTasks()]);
+    for (const user of users) {
+      const settings = await getReminderSettingsForUser(user);
+      if (!settings.enabled || isWithinQuietHours(settings, timeKey)) continue;
+      const visibleTasks = await getVisibleTasksForUser(user, tasks);
+      const openTasks = visibleTasks.filter((task) => task.status !== "done");
+      if (settings.dailySummaryEnabled && settings.dailySummaryTime === timeKey && shouldSendReminder(settings, "dailySummary", dateKey)) {
+        await sendReminderToUser(user, openTasks, "สรุปงานวันนี้จาก BossBoard", "dailySummary", dateKey);
+        continue;
+      }
+      if (settings.dueSoonEnabled && settings.dueSoonTime === timeKey && shouldSendReminder(settings, "dueSoon", dateKey)) {
+        const dueSoonTasks = openTasks.filter((task) => {
+          const diff = getDateDiffInDays(task.dueDate, dateKey);
+          return diff >= 0 && diff <= settings.dueSoonDays;
+        });
+        await sendReminderToUser(user, dueSoonTasks, `งานที่ใกล้ครบกำหนดใน ${settings.dueSoonDays} วัน`, "dueSoon", dateKey);
+        continue;
+      }
+      if (settings.overdueEnabled && settings.reminderTime === timeKey && shouldSendReminder(settings, "overdue", dateKey)) {
+        const overdueTasks = openTasks.filter((task) => getDateDiffInDays(task.dueDate, dateKey) < 0);
+        await sendReminderToUser(user, overdueTasks, "งานเลยกำหนดที่ควรรีบดู", "overdue", dateKey);
+      }
+    }
+  } catch (error) {
+    console.error("Reminder tick failed", error);
+  } finally {
+    reminderTickRunning = false;
+  }
+}
+
 async function notifyTaskUpdate(task, heading = "อัปเดตงานแล้ว", changeSummary = "") {
   const targetId = await getDefaultLineTarget();
   if (!targetId) return;
@@ -1585,14 +1737,49 @@ async function handleLineApi(request, response) {
       return;
     }
 
-    if (request.method === "POST" && url.pathname === "/api/line/push-summary") {
+    if (request.method === "GET" && url.pathname === "/api/line/reminder-settings") {
+      const currentUser = await getCurrentUser(request);
+      if (!currentUser) {
+        sendJson(response, 401, { error: "LINE user is required" });
+        return;
+      }
+      sendJson(response, 200, await getReminderSettingsForUser(currentUser));
+      return;
+    }
+
+    if (request.method === "PATCH" && url.pathname === "/api/line/reminder-settings") {
+      const currentUser = await getCurrentUser(request);
+      if (!currentUser) {
+        sendJson(response, 401, { error: "LINE user is required" });
+        return;
+      }
       const input = await readJsonBody(request);
-      const to = input.to || targetId;
+      sendJson(response, 200, await saveReminderSettingsForUser(currentUser, input));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/line/test-reminder") {
+      const currentUser = await getCurrentUser(request);
+      if (!currentUser) {
+        sendJson(response, 401, { error: "LINE user is required" });
+        return;
+      }
+      const visibleTasks = await getVisibleTasksForUser(currentUser);
+      await pushLine(currentUser.lineUserId, buildReminderText(currentUser, visibleTasks, "ทดสอบแจ้งเตือนจาก BossBoard"));
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/line/push-summary") {
+      const currentUser = await getCurrentUser(request);
+      const input = await readJsonBody(request);
+      const to = input.to || currentUser?.lineUserId || targetId;
       if (!to) {
         sendJson(response, 400, { error: "LINE_TARGET_ID is missing" });
         return;
       }
-      await pushLine(to, buildTaskSummary(await readTasks()));
+      const tasks = currentUser ? await getVisibleTasksForUser(currentUser) : await readTasks();
+      await pushLine(to, buildTaskSummary(tasks));
       sendJson(response, 200, { ok: true });
       return;
     }
@@ -1765,4 +1952,6 @@ ensureDatabase().then(() => {
   server.listen(port, host, () => {
     console.log(`LineTask is running at http://${host}:${port}`);
   });
+  setInterval(runReminderTick, 60 * 1000);
+  runReminderTick();
 });

@@ -1415,6 +1415,75 @@ body[data-view="profile"] .line-status-card {
   cursor: pointer;
 }
 
+.reminder-hero-card {
+  background: linear-gradient(135deg, #efffea, #fffaf4);
+  border-color: #b6ef9d;
+}
+
+.reminder-settings-form {
+  display: grid;
+  gap: 14px;
+}
+
+.reminder-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.switch-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #f6e1c8;
+  border-radius: 18px;
+  background: #fffaf4;
+  padding: 12px;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.compact-switch {
+  grid-template-columns: 22px auto;
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.switch-row input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.switch-row input[type="time"],
+.switch-row input[type="number"] {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 0 10px;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.switch-row input[type="number"] {
+  width: 58px;
+}
+
+.inline-setting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.inline-setting small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
 body[data-view="tasks"] .phone-app,
 body[data-view="create"] .phone-app {
   padding-bottom: 118px;
@@ -1624,6 +1693,20 @@ body {
     padding: 0 10px;
     font-size: 12px;
     white-space: nowrap;
+  }
+
+  .switch-row {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .switch-row > input[type="time"],
+  .switch-row > .inline-setting {
+    grid-column: 2;
+    justify-self: stretch;
+  }
+
+  .inline-setting {
+    justify-content: flex-start;
   }
 
   .create-task-page {
