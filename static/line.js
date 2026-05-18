@@ -11,6 +11,8 @@ const mobilePriorityMeta = {
   low: { label: "ต่ำ", className: "priority-low" }
 };
 
+const PERSONAL_MODE = true;
+
 const fallbackTasks = [
   {
     id: "task-1",
@@ -99,7 +101,7 @@ document.querySelectorAll(".bottom-nav button").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll(".bottom-nav button").forEach((item) => item.classList.toggle("active", item === button));
     if (button.textContent.trim() === "ตั้งค่า") {
-      renderTeamSettings();
+      renderPersonalSettings();
     } else if (button.textContent.trim() === "โปรไฟล์" || button.textContent.trim() === "งานของฉัน") {
       renderMyProfile();
     } else {
@@ -298,13 +300,17 @@ function renderMobile() {
     const diff = (new Date(`${task.dueDate}T00:00:00+07:00`).getTime() - today.getTime()) / 86400000;
     return task.status !== "done" && diff >= 0 && diff <= 3;
   });
-  const mineTasks = mobileTasks.filter((task) => task.assignee.toLowerCase() === "narin");
+  const mineTasks = PERSONAL_MODE
+    ? mobileTasks
+    : mobileTasks.filter((task) => task.assignee.toLowerCase() === "narin");
   const doneTasks = mobileTasks.filter((task) => task.status === "done");
 
   const visibleTasks = getFilteredTasks({ dueTasks, mineTasks, doneTasks });
   mobileElements.filterText.textContent = getFilterText();
   mobileElements.sectionTitle.textContent = "ภาพรวมงานวันนี้";
-  mobileElements.sectionSubtitle.textContent = "จัดการงานสำคัญและบอร์ดของทีม";
+  mobileElements.sectionSubtitle.textContent = PERSONAL_MODE
+    ? "งานส่วนตัวของคุณ เตือนผ่าน LINE อัตโนมัติ"
+    : "จัดการงานสำคัญและบอร์ดของทีม";
   mobileElements.taskList.innerHTML = renderDashboard({
     tasks: visibleTasks,
     dueTasks,
@@ -388,8 +394,8 @@ function renderDashboard({ tasks, dueTasks, doneTasks }) {
       <section class="line-automation-card">
         <div class="line-bubble">LINE</div>
         <div>
-          <strong>ส่งอัปเดตงานผ่าน LINE อัตโนมัติ</strong>
-          <p class="task-description">แจ้งเตือนความคืบหน้าให้ทีมได้ทันที</p>
+          <strong>เตือนงานผ่าน LINE ของคุณ</strong>
+          <p class="task-description">สรุปงานค้าง งานใกล้ครบกำหนด และเปิดแอปจากแชทได้ทันที</p>
         </div>
         <button id="dailyLineButtonInline" class="view-all-link" type="button">ตั้งค่า ›</button>
       </section>
@@ -443,6 +449,56 @@ function renderMiniColumn(title, tasks, status) {
       <button class="mini-add" data-add-status="${status}" type="button">+ เพิ่มงาน</button>
     </div>
   `;
+}
+
+function renderPersonalSettings() {
+  document.body.dataset.view = "settings";
+  mobileElements.sectionTitle.textContent = "ตั้งค่างานส่วนตัว";
+  mobileElements.sectionSubtitle.textContent = "โหมดนี้แยกข้อมูลตามบัญชี LINE ของแต่ละคน";
+
+  mobileElements.taskList.innerHTML = `
+    <div class="dashboard-grid">
+      <article class="profile-card">
+        <div class="section-title-row">
+          <h2>บัญชี LINE นี้</h2>
+          <span class="pill status-done">ส่วนตัว</span>
+        </div>
+        <p class="task-description">${escapeMobileHtml(teamState.user?.displayName || "ยังไม่ทราบชื่อ")}<br>${escapeMobileHtml(teamState.user?.lineUserId || currentLineUserId || "เปิดผ่าน LINE เพื่อระบุตัวตน")}</p>
+        <div class="task-actions" style="margin-top: 14px;">
+          <button type="button" id="openProfileFromSettings">แก้โปรไฟล์</button>
+          <button type="button" id="backToDashboardFromSettings">กลับหน้าหลัก</button>
+        </div>
+      </article>
+
+      <article class="profile-card">
+        <div class="section-title-row">
+          <h2>การใช้งานตอนนี้</h2>
+          <span class="pill priority-medium">Single user</span>
+        </div>
+        <div class="kpi-grid">
+          <div class="kpi-item"><span>งานทั้งหมด</span><strong>${mobileTasks.length}</strong></div>
+          <div class="kpi-item"><span>ยังไม่เสร็จ</span><strong>${mobileTasks.filter((task) => task.status !== "done").length}</strong></div>
+          <div class="kpi-item"><span>เสร็จแล้ว</span><strong>${mobileTasks.filter((task) => task.status === "done").length}</strong></div>
+          <div class="kpi-item"><span>ใกล้ครบกำหนด</span><strong>${mobileTasks.filter((task) => {
+            const diff = (new Date(`${task.dueDate}T00:00:00+07:00`).getTime() - Date.now()) / 86400000;
+            return task.status !== "done" && diff >= 0 && diff <= 3;
+          }).length}</strong></div>
+        </div>
+        <p class="task-description" style="margin-top: 14px;">ตอนนี้ทุกคนที่เปิดผ่าน LINE OA จะเห็นเฉพาะงานของตัวเอง ทีมและสมาชิกยังเก็บไว้เป็นฟีเจอร์อนาคต</p>
+      </article>
+
+      <article class="profile-card future-team-card">
+        <div class="section-title-row">
+          <h2>ทีมและสมาชิก</h2>
+          <span class="pill status-review">ไว้เฟสถัดไป</span>
+        </div>
+        <p class="task-description">ระบบทีมยังอยู่ในโค้ด แต่ซ่อนจาก flow หลักก่อน เพื่อให้แอปเป็นผู้ช่วยส่วนตัวใน LINE ที่ใช้ง่ายและไม่สับสน</p>
+      </article>
+    </div>
+  `;
+
+  document.querySelector("#openProfileFromSettings")?.addEventListener("click", renderMyProfile);
+  document.querySelector("#backToDashboardFromSettings")?.addEventListener("click", renderMobile);
 }
 
 function renderTeamSettings() {
@@ -762,7 +818,7 @@ function getFilteredTasks(groups) {
 
 function getFilterText() {
   if (activeFilter === "due") return "งานที่ควรรีบดู";
-  if (activeFilter === "mine") return "งานที่มอบหมายให้ Narin";
+  if (activeFilter === "mine") return PERSONAL_MODE ? "งานของฉันทั้งหมด" : "งานที่มอบหมายให้ Narin";
   if (activeFilter === "done") return "งานที่ปิดแล้ว";
   return "แสดงงานทั้งหมด";
 }
@@ -802,6 +858,11 @@ function openMobileDialog(task) {
 function renderAssigneeSelect(task) {
   const select = document.querySelector("#mobileTaskAssigneeUserId");
   const fallbackName = task.assignee || teamState.user?.displayName || "Unassigned";
+  if (PERSONAL_MODE) {
+    const personalName = teamState.user?.displayName || fallbackName || "ฉัน";
+    select.innerHTML = `<option value="${escapeMobileHtml(teamState.user?.id || "")}" data-name="${escapeMobileHtml(personalName)}" data-organization="">${escapeMobileHtml(personalName)}</option>`;
+    return;
+  }
   const options = assigneeOptions.length
     ? assigneeOptions
     : teamState.user
@@ -827,7 +888,7 @@ async function saveMobileTask(event) {
     project: "LINE Mobile",
     assignee: document.querySelector("#mobileTaskAssigneeUserId").selectedOptions[0]?.dataset.name || "Unassigned",
     assigneeUserId: document.querySelector("#mobileTaskAssigneeUserId").value,
-    organizationId: document.querySelector("#mobileTaskAssigneeUserId").selectedOptions[0]?.dataset.organization || "",
+    organizationId: PERSONAL_MODE ? "" : document.querySelector("#mobileTaskAssigneeUserId").selectedOptions[0]?.dataset.organization || "",
     dueDate: document.querySelector("#mobileTaskDueDate").value,
     status: document.querySelector("#mobileTaskStatus").value,
     priority: document.querySelector("#mobileTaskPriority").value,
@@ -857,7 +918,7 @@ function createMobileTask() {
     project: "LINE Mobile",
     assignee: teamState.user?.displayName || "Narin",
     assigneeUserId: teamState.user?.id || "",
-    organizationId: teamState.activeOrganization?.id || "",
+    organizationId: PERSONAL_MODE ? "" : teamState.activeOrganization?.id || "",
     dueDate: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
     status: "todo",
     priority: "medium",
