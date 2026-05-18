@@ -65,6 +65,7 @@ let teamState = {
 let pendingInviteOrganizationId = "";
 let myKpi = null;
 let myTasksFilter = "today";
+let selectedProjectName = "";
 
 const mobileElements = {
   taskList: document.querySelector("#taskList"),
@@ -342,6 +343,17 @@ function renderMobile() {
   mobileElements.taskList.querySelectorAll("[data-edit-task]").forEach((button) => {
     button.addEventListener("click", () => openMobileDialog(mobileTasks.find((task) => task.id === button.dataset.editTask)));
   });
+  mobileElements.taskList.querySelectorAll("[data-card-edit]").forEach((card) => {
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      openMobileDialog(mobileTasks.find((task) => task.id === card.dataset.cardEdit));
+    });
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openMobileDialog(mobileTasks.find((task) => task.id === card.dataset.cardEdit));
+    });
+  });
 
   mobileElements.taskList.querySelectorAll("[data-done-task]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -362,11 +374,19 @@ function renderMobile() {
   mobileElements.taskList.querySelectorAll("[data-add-status]").forEach((button) => {
     button.addEventListener("click", () => openMobileDialog({ ...createMobileTask(), status: button.dataset.addStatus }));
   });
-  mobileElements.taskList.querySelector("[data-open-my-tasks]")?.addEventListener("click", () => {
-    setActiveNav("tasks");
-    renderMyTasksPage();
+  mobileElements.taskList.querySelectorAll("[data-open-my-tasks]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedProjectName = "";
+      setActiveNav("tasks");
+      renderMyTasksPage();
+    });
   });
-  document.querySelector("#dailyLineButtonInline")?.addEventListener("click", pushSummaryToLine);
+  mobileElements.taskList.querySelectorAll("[data-open-line-settings]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setActiveNav("line");
+      renderPersonalSettings();
+    });
+  });
 }
 
 function renderDashboard({ tasks, dueTasks, doneTasks }) {
@@ -401,7 +421,7 @@ function renderDashboard({ tasks, dueTasks, doneTasks }) {
       <section class="important-section">
         <div class="section-title-row">
           <h2>งานสำคัญของคุณ</h2>
-          <button class="view-all-link" type="button">ดูทั้งหมด ›</button>
+          <button class="view-all-link" data-open-my-tasks type="button">ดูทั้งหมด ›</button>
         </div>
         ${importantTask ? renderFeaturedTask(importantTask) : `<p class="task-description">ยังไม่มีงานสำคัญ</p>`}
       </section>
@@ -422,7 +442,7 @@ function renderDashboard({ tasks, dueTasks, doneTasks }) {
           <strong>เตือนงานผ่าน LINE ของคุณ</strong>
           <p class="task-description">สรุปงานค้าง งานใกล้ครบกำหนด และเปิดแอปจากแชทได้ทันที</p>
         </div>
-        <button id="dailyLineButtonInline" class="view-all-link" type="button">ตั้งค่า ›</button>
+        <button class="view-all-link" data-open-line-settings type="button">ตั้งค่า ›</button>
       </section>
     </div>
   `;
@@ -430,10 +450,12 @@ function renderDashboard({ tasks, dueTasks, doneTasks }) {
 
 function renderFeaturedTask(task) {
   const percent = task.status === "done" ? 100 : task.status === "progress" || task.status === "review" ? 65 : 20;
+  const statusMeta = mobileStatusMeta[task.status] || mobileStatusMeta.todo;
+  const priorityMeta = mobilePriorityMeta[task.priority] || mobilePriorityMeta.medium;
   return `
-    <article class="featured-task-card">
+    <article class="featured-task-card" data-card-edit="${task.id}" tabindex="0" role="button" aria-label="เปิดงาน ${escapeMobileHtml(task.title)}">
       <div class="featured-head">
-        <div class="featured-icon">📣</div>
+        <div class="featured-icon">${task.status === "done" ? "✓" : "📣"}</div>
         <div>
           <div class="task-title">${escapeMobileHtml(task.title)}</div>
           <p class="task-description">${escapeMobileHtml(task.project || "โปรเจกต์ทั่วไป")}</p>
@@ -441,8 +463,8 @@ function renderFeaturedTask(task) {
         <div class="ring-progress" style="--progress: ${percent}%"><span>${percent}%</span></div>
       </div>
       <div class="featured-meta">
-        <span class="pill ${mobileStatusMeta[task.status].className}">${mobileStatusMeta[task.status].label}</span>
-        <span class="pill priority-${task.priority}">${mobilePriorityMeta[task.priority].label}</span>
+        <span class="pill ${statusMeta.className}">${statusMeta.label}</span>
+        <span class="pill ${priorityMeta.className}">${priorityMeta.label}</span>
         <span class="pill status-todo">${formatMobileDate(task.dueDate)}</span>
       </div>
       <div class="task-bottom">
@@ -501,11 +523,16 @@ function renderMiniColumn(title, tasks, status) {
 
 function renderMyTasksPage() {
   document.body.dataset.view = "tasks";
-  mobileElements.sectionTitle.textContent = "งานของฉัน";
-  mobileElements.sectionSubtitle.textContent = "ดูงานที่ต้องทำวันนี้ งานที่กำลังจะมาถึง และงานที่เสร็จแล้ว";
+  mobileElements.sectionTitle.textContent = selectedProjectName ? selectedProjectName : "งานของฉัน";
+  mobileElements.sectionSubtitle.textContent = selectedProjectName
+    ? "งานในโปรเจกต์นี้ แตะการ์ดเพื่อแก้ไขหรือปิดงาน"
+    : "ดูงานที่ต้องทำวันนี้ งานที่กำลังจะมาถึง และงานที่เสร็จแล้ว";
 
   const todayKey = new Date().toISOString().slice(0, 10);
-  const filteredTasks = mobileTasks.filter((task) => {
+  const projectScopedTasks = selectedProjectName
+    ? mobileTasks.filter((task) => (task.project || "ทั่วไป") === selectedProjectName)
+    : mobileTasks;
+  const filteredTasks = projectScopedTasks.filter((task) => {
     if (myTasksFilter === "done") return task.status === "done";
     if (myTasksFilter === "upcoming") return task.status !== "done" && task.dueDate > todayKey;
     return task.status !== "done" && task.dueDate <= todayKey;
@@ -513,6 +540,7 @@ function renderMyTasksPage() {
 
   mobileElements.taskList.innerHTML = `
     <div class="my-tasks-screen">
+      ${selectedProjectName ? `<button class="view-all-link project-clear-button" data-clear-project type="button">← งานของฉันทั้งหมด</button>` : ""}
       <div class="segmented-tabs">
         <button class="${myTasksFilter === "today" ? "active" : ""}" data-my-filter="today" type="button">วันนี้</button>
         <button class="${myTasksFilter === "upcoming" ? "active" : ""}" data-my-filter="upcoming" type="button">ที่กำลังจะมาถึง</button>
@@ -529,6 +557,10 @@ function renderMyTasksPage() {
       myTasksFilter = button.dataset.myFilter;
       renderMyTasksPage();
     });
+  });
+  mobileElements.taskList.querySelector("[data-clear-project]")?.addEventListener("click", () => {
+    selectedProjectName = "";
+    renderMyTasksPage();
   });
   mobileElements.taskList.querySelectorAll("[data-row-edit]").forEach((button) => {
     button.addEventListener("click", () => openMobileDialog(mobileTasks.find((task) => task.id === button.dataset.rowEdit)));
@@ -725,19 +757,27 @@ function renderProjectsPage() {
       `}
     </div>
   `;
+  mobileElements.taskList.querySelectorAll("[data-project-name]").forEach((card) => {
+    card.addEventListener("click", () => {
+      selectedProjectName = card.dataset.projectName;
+      myTasksFilter = "upcoming";
+      setActiveNav("tasks");
+      renderMyTasksPage();
+    });
+  });
 }
 
 function renderProjectCard(project) {
   const percent = Math.round((project.done / Math.max(project.total, 1)) * 100);
   return `
-    <article class="profile-card project-overview-card">
+    <button class="profile-card project-overview-card" data-project-name="${escapeMobileHtml(project.name)}" type="button">
       <div class="section-title-row">
         <h2>${escapeMobileHtml(project.name)}</h2>
         <span class="pill priority-medium">${percent}%</span>
       </div>
       <div class="progress-track"><div class="progress-fill" style="width: ${percent}%"></div></div>
       <p class="task-description">${project.done}/${project.total} งานเสร็จแล้ว · ใกล้สุด ${formatMobileDate(project.nextDue)}</p>
-    </article>
+    </button>
   `;
 }
 
