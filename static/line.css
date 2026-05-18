@@ -895,22 +895,43 @@ h1::after {
 
 .line-status-card {
   border-radius: 999px;
-  padding: 9px 12px 9px 10px;
-  margin: 2px 0 16px auto;
-  box-shadow: 0 10px 24px rgba(6, 199, 85, 0.12);
+  padding: 6px 9px 6px 7px;
+  margin: -6px 0 12px auto;
+  box-shadow: 0 6px 14px rgba(6, 199, 85, 0.08);
+  width: fit-content;
+  max-width: 100%;
+  gap: 8px;
 }
 
 .line-status-card::before {
   content: "LINE";
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
   background: var(--green);
   color: #fff;
   display: grid;
   place-items: center;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 800;
+  flex: 0 0 auto;
+}
+
+.line-status-card strong {
+  display: block;
+  font-size: 12px;
+  line-height: 1.15;
+}
+
+.line-status-card p {
+  display: none;
+}
+
+.line-status-card .status-action-button {
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .dashboard-grid {
@@ -1413,8 +1434,6 @@ body {
 }
 
 .line-status-card {
-  width: 100%;
-  margin-right: 0;
   min-width: 0;
 }
 
