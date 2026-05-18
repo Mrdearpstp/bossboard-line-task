@@ -21,6 +21,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  overflow-x: hidden;
   background:
     radial-gradient(circle at 78px 60px, rgba(249, 115, 22, 0.16), transparent 120px),
     linear-gradient(180deg, #fff7ea 0%, #fffaf4 48%, #fff4e7 100%);
@@ -44,6 +45,7 @@ button {
   min-height: 100vh;
   margin: 0 auto;
   padding: 18px 16px 92px;
+  overflow-x: hidden;
 }
 
 .app-header {
@@ -1362,6 +1364,275 @@ body[data-view="profile"] .line-status-card {
 body[data-view="tasks"] .phone-app,
 body[data-view="create"] .phone-app {
   padding-bottom: 118px;
+}
+
+/* Safe viewport guardrails */
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.phone-app,
+.task-list,
+.dashboard-grid,
+.important-section,
+.mini-board,
+.line-automation-card,
+.profile-card,
+.create-task-page {
+  max-width: 100%;
+}
+
+.app-header,
+.line-status-card,
+.section-title-row,
+.dashboard-task-row,
+.personal-task-row,
+.featured-head,
+.form-row,
+.segmented-tabs {
+  min-width: 0;
+}
+
+.app-header > *,
+.section-title-row > *,
+.dashboard-task-row > *,
+.personal-task-row > *,
+.featured-head > * {
+  min-width: 0;
+}
+
+.hero-summary {
+  overflow: hidden;
+}
+
+.hero-summary::before {
+  display: none;
+}
+
+.line-status-card {
+  width: 100%;
+  margin-right: 0;
+  min-width: 0;
+}
+
+.line-status-card > div {
+  min-width: 0;
+}
+
+.status-action-button {
+  flex: 0 0 auto;
+}
+
+.dashboard-hero {
+  grid-template-columns: minmax(0, 1fr) clamp(82px, 28vw, 120px);
+  overflow: hidden;
+}
+
+.boss-mascot {
+  min-height: clamp(126px, 42vw, 166px);
+  overflow: hidden;
+}
+
+.boss-cat {
+  width: clamp(88px, 27vw, 120px);
+  height: clamp(112px, 34vw, 148px);
+  border-radius: 46px 46px 28px 28px;
+}
+
+.boss-cat::before,
+.boss-cat::after {
+  width: clamp(32px, 10vw, 42px);
+  height: clamp(32px, 10vw, 42px);
+  top: -15px;
+}
+
+.boss-face {
+  inset: 24px 12px auto;
+  height: clamp(54px, 16vw, 66px);
+}
+
+.boss-face::before,
+.boss-face::after {
+  width: clamp(18px, 6vw, 24px);
+}
+
+.boss-tie {
+  width: 24px;
+  height: 52px;
+}
+
+.board-columns {
+  grid-template-columns: repeat(3, minmax(96px, 1fr));
+}
+
+.bottom-nav {
+  max-width: calc(100vw - 14px);
+}
+
+@media (max-width: 430px) {
+  .phone-app {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .app-header {
+    grid-template-columns: 46px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  h1 {
+    font-size: clamp(25px, 7.8vw, 32px);
+  }
+
+  .tagline {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .header-actions {
+    gap: 6px;
+  }
+
+  .round-button,
+  .profile-dot {
+    width: 42px;
+    height: 42px;
+  }
+
+  .dashboard-hero {
+    grid-template-columns: minmax(0, 1fr) 86px;
+    gap: 8px;
+  }
+
+  .hero-summary {
+    padding: 16px 14px;
+  }
+
+  .hero-summary h2,
+  .important-section h2,
+  .mini-board h2 {
+    font-size: clamp(18px, 5.4vw, 22px);
+  }
+
+  .summary-stats {
+    gap: 4px;
+  }
+
+  .summary-stat strong {
+    font-size: 26px;
+  }
+
+  .boss-mascot {
+    min-height: 130px;
+  }
+
+  .boss-cat {
+    width: 92px;
+    height: 120px;
+  }
+
+  .dashboard-task-row,
+  .personal-task-row {
+    grid-template-columns: 42px minmax(0, 1fr) 36px 44px;
+    gap: 8px;
+    padding: 11px;
+  }
+
+  .dashboard-row-icon,
+  .task-avatar,
+  .avatar-choice {
+    width: 40px;
+    height: 40px;
+    border-radius: 14px;
+    font-size: 12px;
+  }
+
+  .dashboard-row-badge,
+  .personal-status {
+    width: 42px;
+    height: 42px;
+    font-size: 18px;
+  }
+
+  .segmented-tabs {
+    gap: 7px;
+  }
+
+  .segmented-tabs button {
+    min-height: 48px;
+    padding: 0 8px;
+    font-size: 13px;
+  }
+
+  .view-all-link {
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .create-task-page {
+    padding: 16px;
+    border-radius: 24px;
+  }
+
+  .create-task-page label {
+    font-size: 16px;
+  }
+
+  .create-task-page input,
+  .create-task-page textarea,
+  .create-task-page select {
+    min-height: 52px;
+  }
+}
+
+@media (max-width: 390px) {
+  .phone-app {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .dashboard-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .boss-mascot {
+    display: none;
+  }
+
+  .line-automation-card {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .line-automation-card .view-all-link {
+    grid-column: 1 / -1;
+  }
+
+  .personal-task-row {
+    grid-template-columns: 30px minmax(0, 1fr) 38px;
+  }
+
+  .personal-task-row .task-avatar {
+    display: none;
+  }
+
+  .bottom-nav {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    padding: 7px;
+  }
+
+  .bottom-nav button {
+    font-size: 10px;
+    min-width: 0;
+  }
+
+  .section-title-row {
+    gap: 8px;
+  }
 }
 
 @media (max-width: 360px) {
