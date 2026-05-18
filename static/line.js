@@ -55,6 +55,7 @@ const fallbackTasks = [
 let mobileTasks = [];
 let activeFilter = "all";
 let currentLineUserId = "";
+let currentLineIdToken = "";
 let assigneeOptions = [];
 let teamState = {
   user: null,
@@ -157,9 +158,17 @@ async function initializeLine() {
 
     const profile = await window.liff.getProfile();
     currentLineUserId = profile.userId;
+    currentLineIdToken = window.liff.getIDToken ? window.liff.getIDToken() || "" : "";
+    if (!currentLineIdToken) {
+      setLineStatus("ยืนยัน LINE ไม่สำเร็จ", "กรุณาเปิดผ่าน LINE อีกครั้ง");
+      return;
+    }
     await fetch("/api/line/profile", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-line-id-token": currentLineIdToken
+      },
       body: JSON.stringify(profile)
     });
     setLineStatus("เชื่อม LINE แล้ว", `สวัสดี ${profile.displayName}`);
@@ -264,7 +273,8 @@ function handleInviteFromQuery() {
 async function apiFetch(url, options = {}) {
   const headers = {
     ...(options.headers || {}),
-    ...(currentLineUserId ? { "x-line-user-id": currentLineUserId } : {})
+    ...(currentLineUserId ? { "x-line-user-id": currentLineUserId } : {}),
+    ...(currentLineIdToken ? { "x-line-id-token": currentLineIdToken } : {})
   };
   return fetch(url, { ...options, headers });
 }

@@ -403,6 +403,40 @@ function getLineConfig() {
   };
 }
 
+function getLineClientId() {
+  const { liffId } = getLineConfig();
+  return String(process.env.LINE_LOGIN_CHANNEL_ID || liffId.split("-")[0] || "");
+}
+
+function isLocalHttpRequest(request) {
+  const requestHost = String(request.headers.host || "");
+  return requestHost.startsWith("localhost") || requestHost.startsWith("127.0.0.1");
+}
+
+async function verifyLineIdToken(idToken) {
+  const clientId = getLineClientId();
+  if (!idToken || !clientId) return null;
+  const body = new URLSearchParams({
+    id_token: idToken,
+    client_id: clientId
+  });
+  const result = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+  if (!result.ok) return null;
+  return result.json();
+}
+
+async function getVerifiedLineProfileFromRequest(request) {
+  if (isLocalHttpRequest(request)) return null;
+  const idToken = request.headers["x-line-id-token"] || "";
+  const verified = await verifyLineIdToken(idToken);
+  if (!verified?.sub) return null;
+  return verified;
+}
+
 function verifyLineSignature(rawBody, signature) {
   const { channelSecret } = getLineConfig();
   if (!channelSecret || !signature) return false;
@@ -1162,8 +1196,19 @@ async function runReminderTick() {
   }
 }
 
-async function notifyTaskUpdate(task, heading = "อัปเดตงานแล้ว", changeSummary = "") {
-  const targetId = await getDefaultLineTarget();
+async function getTaskLineTarget(task, preferredUser = null) {
+  if (preferredUser?.lineUserId && preferredUser.lineUserId !== "dev-user") return preferredUser.lineUserId;
+  if (task.createdByLineUserId && task.createdByLineUserId !== "dev-user") return task.createdByLineUserId;
+  if (task.assigneeUserId) {
+    const users = await readJsonFile(usersFile, []);
+    const assignee = users.find((user) => user.id === task.assigneeUserId);
+    if (assignee?.lineUserId && assignee.lineUserId !== "dev-user") return assignee.lineUserId;
+  }
+  return "";
+}
+
+async function notifyTaskUpdate(task, heading = "อัปเดตงานแล้ว", changeSummary = "", preferredUser = null) {
+  const targetId = await getTaskLineTarget(task, preferredUser);
   if (!targetId) return;
   try {
     await pushLineMessages(targetId, [buildTaskFlex(task, heading, changeSummary)]);
@@ -1218,25 +1263,34 @@ async function upsertAppUserFromLineProfile(profile) {
 
 async function getCurrentUser(request) {
   const url = new URL(request.url || "/", `http://${host}:${port}`);
-  const requestedLineUserId = request.headers["x-line-user-id"] || url.searchParams.get("lineUserId");
-  const requestHost = String(request.headers.host || "");
-  const isLocalRequest = requestHost.startsWith("localhost") || requestHost.startsWith("127.0.0.1");
-  if (!requestedLineUserId && !isLocalRequest) return null;
+  const isLocalRequest = isLocalHttpRequest(request);
+  const verifiedProfile = await getVerifiedLineProfileFromRequest(request);
+  if (!verifiedProfile && !isLocalRequest) return null;
 
-  const lineUserId = requestedLineUserId || "dev-user";
+  const requestedLineUserId = url.searchParams.get("lineUserId") || request.headers["x-line-user-id"];
+  const lineUserId = verifiedProfile?.sub || requestedLineUserId || "dev-user";
   const users = await readJsonFile(usersFile, []);
   let user = users.find((item) => item.lineUserId === lineUserId);
   if (!user) {
     user = {
       id: createId("user"),
       lineUserId,
-      displayName: lineUserId === "dev-user" ? "Dev User" : "LINE user",
-      pictureUrl: "",
+      displayName: verifiedProfile?.name || (lineUserId === "dev-user" ? "Dev User" : "LINE user"),
+      pictureUrl: verifiedProfile?.picture || "",
       email: "",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
     await writeJsonFile(usersFile, [user, ...users]);
+  } else if (verifiedProfile?.name || verifiedProfile?.picture) {
+    const updatedUser = {
+      ...user,
+      displayName: verifiedProfile.name || user.displayName,
+      pictureUrl: verifiedProfile.picture || user.pictureUrl,
+      updatedAt: new Date().toISOString()
+    };
+    await writeJsonFile(usersFile, users.map((item) => (item.id === user.id ? updatedUser : item)));
+    user = updatedUser;
   }
   return user;
 }
@@ -1733,6 +1787,16 @@ async function handleLineApi(request, response) {
 
     if (request.method === "POST" && url.pathname === "/api/line/profile") {
       const profile = await readJsonBody(request);
+      const verifiedProfile = await getVerifiedLineProfileFromRequest(request);
+      if (!verifiedProfile && !isLocalHttpRequest(request)) {
+        sendJson(response, 401, { error: "LINE ID token is required" });
+        return;
+      }
+      if (verifiedProfile) {
+        profile.userId = verifiedProfile.sub;
+        profile.displayName = verifiedProfile.name || profile.displayName;
+        profile.pictureUrl = verifiedProfile.picture || profile.pictureUrl;
+      }
       sendJson(response, 200, await saveLineProfile(profile));
       return;
     }
@@ -1886,7 +1950,7 @@ async function handleTasksApi(request, response) {
       );
       await writeTasks(tasks.map((currentTask) => (currentTask.id === id ? task : currentTask)));
       if (input.notifyLine !== false) {
-        await notifyTaskUpdate(task, "อัปเดตงานแล้ว", buildChangeSummary(existingTask, task));
+        await notifyTaskUpdate(task, "อัปเดตงานแล้ว", buildChangeSummary(existingTask, task), currentUser);
       }
       sendJson(response, 200, task);
       return;
@@ -1918,7 +1982,7 @@ async function handleTasksApi(request, response) {
       );
       await writeTasks(tasks.map((currentTask) => (currentTask.id === id ? task : currentTask)));
       if (input.notifyLine !== false) {
-        await notifyTaskUpdate(task, "อัปเดตงานแล้ว", buildChangeSummary(existingTask, task));
+        await notifyTaskUpdate(task, "อัปเดตงานแล้ว", buildChangeSummary(existingTask, task), currentUser);
       }
       sendJson(response, 200, task);
       return;
