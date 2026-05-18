@@ -64,6 +64,7 @@ let teamState = {
 };
 let pendingInviteOrganizationId = "";
 let myKpi = null;
+let myTasksFilter = "today";
 
 const mobileElements = {
   taskList: document.querySelector("#taskList"),
@@ -88,7 +89,10 @@ document.querySelectorAll(".quick-card").forEach((button) => {
   });
 });
 
-mobileElements.newMobileTaskButton.addEventListener("click", () => openMobileDialog(createMobileTask()));
+mobileElements.newMobileTaskButton.addEventListener("click", () => {
+  setActiveNav("create");
+  renderCreateTaskPage();
+});
 mobileElements.closeDialogButton.addEventListener("click", () => mobileElements.taskDialog.close());
 mobileElements.mobileTaskForm.addEventListener("submit", saveMobileTask);
 mobileElements.lineLoginButton.addEventListener("click", () => {
@@ -99,16 +103,26 @@ mobileElements.lineLoginButton.addEventListener("click", () => {
 
 document.querySelectorAll(".bottom-nav button").forEach((button) => {
   button.addEventListener("click", () => {
-    document.querySelectorAll(".bottom-nav button").forEach((item) => item.classList.toggle("active", item === button));
-    if (button.textContent.trim() === "ตั้งค่า") {
-      renderPersonalSettings();
-    } else if (button.textContent.trim() === "โปรไฟล์" || button.textContent.trim() === "งานของฉัน") {
-      renderMyProfile();
-    } else {
-      renderMobile();
-    }
+    const view = button.dataset.navView || "home";
+    setActiveNav(view);
+    if (view === "create") renderCreateTaskPage();
+    else if (view === "tasks") renderMyTasksPage();
+    else if (view === "projects") renderProjectsPage();
+    else if (view === "line") renderPersonalSettings();
+    else renderMobile();
   });
 });
+
+document.querySelector(".profile-dot")?.addEventListener("click", () => {
+  setActiveNav("tasks");
+  renderMyProfile();
+});
+
+function setActiveNav(view) {
+  document.querySelectorAll(".bottom-nav button").forEach((item) => {
+    item.classList.toggle("active", item.dataset.navView === view);
+  });
+}
 
 initializeApp();
 
@@ -293,6 +307,14 @@ async function patchTaskToApi(taskId, patch) {
   return response.json();
 }
 
+async function persistTask(task, exists) {
+  const savedTask = await saveTaskToApi(task, exists);
+  mobileTasks = exists
+    ? mobileTasks.map((currentTask) => (currentTask.id === savedTask.id ? savedTask : currentTask))
+    : [savedTask, ...mobileTasks];
+  return savedTask;
+}
+
 function renderMobile() {
   document.body.dataset.view = "dashboard";
   const today = new Date("2026-05-16T00:00:00+07:00");
@@ -340,6 +362,10 @@ function renderMobile() {
   mobileElements.taskList.querySelectorAll("[data-add-status]").forEach((button) => {
     button.addEventListener("click", () => openMobileDialog({ ...createMobileTask(), status: button.dataset.addStatus }));
   });
+  mobileElements.taskList.querySelector("[data-open-my-tasks]")?.addEventListener("click", () => {
+    setActiveNav("tasks");
+    renderMyTasksPage();
+  });
   document.querySelector("#dailyLineButtonInline")?.addEventListener("click", pushSummaryToLine);
 }
 
@@ -383,11 +409,10 @@ function renderDashboard({ tasks, dueTasks, doneTasks }) {
       <section class="mini-board">
         <div class="section-title-row">
           <h2>บอร์ดงานของฉัน</h2>
+          <button class="view-all-link" data-open-my-tasks type="button">ดูบอร์ดทั้งหมด ›</button>
         </div>
-        <div class="board-columns">
-          ${renderMiniColumn("ต้องทำ", todoTasks, "todo")}
-          ${renderMiniColumn("กำลังทำ", progressTasks, "progress")}
-          ${renderMiniColumn("เสร็จแล้ว", completedTasks, "done")}
+        <div class="dashboard-task-list">
+          ${renderDashboardTaskList([...todoTasks, ...progressTasks, ...completedTasks])}
         </div>
       </section>
 
@@ -431,6 +456,29 @@ function renderFeaturedTask(task) {
   `;
 }
 
+function renderDashboardTaskList(tasks) {
+  const list = tasks.slice(0, 3);
+  if (!list.length) {
+    return `<p class="task-description">ยังไม่มีงานในบอร์ด กดเพิ่มงานเพื่อเริ่มเตือนตัวเองผ่าน LINE</p>`;
+  }
+  return list
+    .map((task) => {
+      const percent = task.status === "done" ? "✓" : task.status === "todo" ? "5" : "•";
+      return `
+        <button class="dashboard-task-row" data-edit-task="${task.id}" type="button">
+          <div class="dashboard-row-icon">${task.status === "done" ? "✓" : "▣"}</div>
+          <div>
+            <strong>${escapeMobileHtml(task.title)}</strong>
+            <span>ครบกำหนด ${formatMobileDate(task.dueDate)}</span>
+          </div>
+          <div class="task-avatar">${getInitials(task.assignee || teamState.user?.displayName || "ฉัน")}</div>
+          <span class="dashboard-row-badge ${task.status === "done" ? "done" : ""}">${percent}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
 function renderMiniColumn(title, tasks, status) {
   return `
     <div class="mini-column">
@@ -449,6 +497,157 @@ function renderMiniColumn(title, tasks, status) {
       <button class="mini-add" data-add-status="${status}" type="button">+ เพิ่มงาน</button>
     </div>
   `;
+}
+
+function renderMyTasksPage() {
+  document.body.dataset.view = "tasks";
+  mobileElements.sectionTitle.textContent = "งานของฉัน";
+  mobileElements.sectionSubtitle.textContent = "ดูงานที่ต้องทำวันนี้ งานที่กำลังจะมาถึง และงานที่เสร็จแล้ว";
+
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const filteredTasks = mobileTasks.filter((task) => {
+    if (myTasksFilter === "done") return task.status === "done";
+    if (myTasksFilter === "upcoming") return task.status !== "done" && task.dueDate > todayKey;
+    return task.status !== "done" && task.dueDate <= todayKey;
+  });
+
+  mobileElements.taskList.innerHTML = `
+    <div class="my-tasks-screen">
+      <div class="segmented-tabs">
+        <button class="${myTasksFilter === "today" ? "active" : ""}" data-my-filter="today" type="button">วันนี้</button>
+        <button class="${myTasksFilter === "upcoming" ? "active" : ""}" data-my-filter="upcoming" type="button">ที่กำลังจะมาถึง</button>
+        <button class="${myTasksFilter === "done" ? "active" : ""}" data-my-filter="done" type="button">เสร็จสิ้น</button>
+      </div>
+      <div class="personal-task-list">
+        ${filteredTasks.length ? filteredTasks.map(renderPersonalTaskRow).join("") : renderEmptyPersonalTasks()}
+      </div>
+    </div>
+  `;
+
+  mobileElements.taskList.querySelectorAll("[data-my-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      myTasksFilter = button.dataset.myFilter;
+      renderMyTasksPage();
+    });
+  });
+  mobileElements.taskList.querySelectorAll("[data-row-edit]").forEach((button) => {
+    button.addEventListener("click", () => openMobileDialog(mobileTasks.find((task) => task.id === button.dataset.rowEdit)));
+  });
+  mobileElements.taskList.querySelectorAll("[data-row-done]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        const updatedTask = await patchTaskToApi(button.dataset.rowDone, {
+          status: "done",
+          activityText: "ปิดงานจากหน้างานของฉัน"
+        });
+        mobileTasks = mobileTasks.map((task) => (task.id === updatedTask.id ? updatedTask : task));
+        renderMyTasksPage();
+        showToast("ปิดงานแล้ว");
+      } catch {
+        showToast("ปิดงานไม่สำเร็จ");
+      }
+    });
+  });
+  mobileElements.taskList.querySelector("[data-empty-create]")?.addEventListener("click", () => {
+    setActiveNav("create");
+    renderCreateTaskPage();
+  });
+}
+
+function renderPersonalTaskRow(task) {
+  const status = mobileStatusMeta[task.status] || mobileStatusMeta.todo;
+  const priority = mobilePriorityMeta[task.priority] || mobilePriorityMeta.medium;
+  return `
+    <article class="personal-task-row">
+      <button class="check-box ${task.status === "done" ? "checked" : ""}" data-row-done="${task.id}" type="button" aria-label="Mark done"></button>
+      <button class="personal-task-main" data-row-edit="${task.id}" type="button">
+        <strong>${escapeMobileHtml(task.title)}</strong>
+        <span class="project-chip">${escapeMobileHtml(task.project || "ทั่วไป")}</span>
+        <small>▣ ครบกำหนด ${formatMobileDate(task.dueDate)}</small>
+      </button>
+      <div class="task-avatar">${getInitials(task.assignee || teamState.user?.displayName || "ฉัน")}</div>
+      <span class="personal-status ${status.className}">${task.status === "done" ? "✓" : priority.label}</span>
+    </article>
+  `;
+}
+
+function renderEmptyPersonalTasks() {
+  return `
+    <article class="empty-state-card">
+      <strong>ยังไม่มีงานในหมวดนี้</strong>
+      <p class="task-description">กดปุ่ม + เพื่อเพิ่มงานใหม่ หรือพิมพ์ใน LINE เช่น “ประชุมพรุ่งนี้”</p>
+      <button class="save-button" data-empty-create type="button">เพิ่มงาน</button>
+    </article>
+  `;
+}
+
+function renderCreateTaskPage(seedTask = createMobileTask()) {
+  document.body.dataset.view = "create";
+  mobileElements.sectionTitle.textContent = seedTask.id && mobileTasks.some((task) => task.id === seedTask.id) ? "แก้ไขภารกิจ" : "สร้างภารกิจ";
+  mobileElements.sectionSubtitle.textContent = "เพิ่มงานส่วนตัว แล้วให้ BossBoard เตือนผ่าน LINE";
+
+  const userName = teamState.user?.displayName || "ฉัน";
+  mobileElements.taskList.innerHTML = `
+    <form id="createTaskPageForm" class="create-task-page">
+      <label>ชื่อภารกิจ
+        <input id="createTaskTitle" value="${escapeMobileHtml(seedTask.title)}" placeholder="ชื่อภารกิจ" required />
+      </label>
+      <label>รายละเอียด
+        <textarea id="createTaskDescription" placeholder="รายละเอียด">${escapeMobileHtml(seedTask.description || "")}</textarea>
+      </label>
+      <label>เลือกโปรเจกต์
+        <input id="createTaskProject" value="${escapeMobileHtml(seedTask.project || "LINE Mobile")}" placeholder="เช่น งานส่วนตัว, การตลาด, ลูกค้า" />
+      </label>
+      <div class="assignee-strip" aria-label="ผู้รับผิดชอบ">
+        <span>ผู้รับผิดชอบ</span>
+        <div class="avatar-choice active">${getInitials(userName)}</div>
+      </div>
+      <label>วันครบกำหนด
+        <input id="createTaskDueDate" value="${escapeMobileHtml(seedTask.dueDate)}" type="date" required />
+      </label>
+      <div class="form-row">
+        <label>สถานะ
+          <select id="createTaskStatus">
+            ${Object.entries(mobileStatusMeta).map(([value, meta]) => `<option value="${value}" ${seedTask.status === value ? "selected" : ""}>${meta.label}</option>`).join("")}
+          </select>
+        </label>
+        <label>ความสำคัญ
+          <select id="createTaskPriority">
+            ${Object.entries(mobilePriorityMeta).map(([value, meta]) => `<option value="${value}" ${seedTask.priority === value ? "selected" : ""}>${meta.label}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <button class="create-submit-button" type="submit">สร้างภารกิจ</button>
+    </form>
+  `;
+
+  document.querySelector("#createTaskPageForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const exists = mobileTasks.some((task) => task.id === seedTask.id);
+    const task = {
+      ...seedTask,
+      title: document.querySelector("#createTaskTitle").value.trim() || "Untitled task",
+      description: document.querySelector("#createTaskDescription").value.trim(),
+      project: document.querySelector("#createTaskProject").value.trim() || "งานส่วนตัว",
+      assignee: userName,
+      assigneeUserId: teamState.user?.id || "",
+      organizationId: "",
+      dueDate: document.querySelector("#createTaskDueDate").value,
+      status: document.querySelector("#createTaskStatus").value,
+      priority: document.querySelector("#createTaskPriority").value,
+      tags: ["LIFF"],
+      activity: []
+    };
+    try {
+      await persistTask(task, exists);
+      setActiveNav("tasks");
+      myTasksFilter = task.status === "done" ? "done" : "upcoming";
+      renderMyTasksPage();
+      showToast(exists ? "บันทึกงานแล้ว" : "สร้างภารกิจแล้ว");
+    } catch {
+      showToast("บันทึกงานไม่สำเร็จ");
+    }
+  });
 }
 
 function renderPersonalSettings() {
@@ -499,6 +698,47 @@ function renderPersonalSettings() {
 
   document.querySelector("#openProfileFromSettings")?.addEventListener("click", renderMyProfile);
   document.querySelector("#backToDashboardFromSettings")?.addEventListener("click", renderMobile);
+}
+
+function renderProjectsPage() {
+  document.body.dataset.view = "projects";
+  mobileElements.sectionTitle.textContent = "โปรเจกต์";
+  mobileElements.sectionSubtitle.textContent = "จัดกลุ่มงานส่วนตัวตามเรื่องที่ต้องทำ";
+  const projects = Array.from(
+    mobileTasks.reduce((map, task) => {
+      const name = task.project || "ทั่วไป";
+      const current = map.get(name) || { name, total: 0, done: 0, nextDue: task.dueDate };
+      current.total += 1;
+      if (task.status === "done") current.done += 1;
+      if (task.dueDate && task.dueDate < current.nextDue) current.nextDue = task.dueDate;
+      map.set(name, current);
+      return map;
+    }, new Map()).values()
+  );
+  mobileElements.taskList.innerHTML = `
+    <div class="dashboard-grid">
+      ${projects.length ? projects.map(renderProjectCard).join("") : `
+        <article class="empty-state-card">
+          <strong>ยังไม่มีโปรเจกต์</strong>
+          <p class="task-description">เมื่อสร้างงานใหม่ ระบบจะรวมเป็นโปรเจกต์ให้อัตโนมัติจากช่อง “เลือกโปรเจกต์”</p>
+        </article>
+      `}
+    </div>
+  `;
+}
+
+function renderProjectCard(project) {
+  const percent = Math.round((project.done / Math.max(project.total, 1)) * 100);
+  return `
+    <article class="profile-card project-overview-card">
+      <div class="section-title-row">
+        <h2>${escapeMobileHtml(project.name)}</h2>
+        <span class="pill priority-medium">${percent}%</span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" style="width: ${percent}%"></div></div>
+      <p class="task-description">${project.done}/${project.total} งานเสร็จแล้ว · ใกล้สุด ${formatMobileDate(project.nextDue)}</p>
+    </article>
+  `;
 }
 
 function renderTeamSettings() {
@@ -898,10 +1138,7 @@ async function saveMobileTask(event) {
 
   const exists = mobileTasks.some((currentTask) => currentTask.id === task.id);
   try {
-    const savedTask = await saveTaskToApi(task, exists);
-    mobileTasks = exists
-      ? mobileTasks.map((currentTask) => (currentTask.id === savedTask.id ? savedTask : currentTask))
-      : [savedTask, ...mobileTasks];
+    await persistTask(task, exists);
     mobileElements.taskDialog.close();
     renderMobile();
     showToast("บันทึกงานแล้ว");
@@ -948,4 +1185,12 @@ function escapeMobileHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function getInitials(value) {
+  const text = String(value || "ฉัน").trim();
+  if (!text) return "ฉัน";
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return `${words[0][0] || ""}${words[1][0] || ""}`.toUpperCase();
+  return text.slice(0, 2).toUpperCase();
 }
