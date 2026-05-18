@@ -108,8 +108,12 @@ document.querySelectorAll(".bottom-nav button").forEach((button) => {
   });
 });
 
-initializeLine();
-loadMobileTasks();
+initializeApp();
+
+async function initializeApp() {
+  await initializeLine();
+  await loadMobileTasks();
+}
 
 async function initializeLine() {
   try {
@@ -171,8 +175,15 @@ async function pushSummaryToLine() {
 }
 
 async function loadMobileTasks() {
+  const allowLocalPreview = ["127.0.0.1", "localhost"].includes(window.location.hostname);
+  if (!currentLineUserId && !allowLocalPreview) {
+    mobileTasks = [];
+    renderMobile();
+    showToast("กรุณาเปิดผ่าน LINE และเข้าสู่ระบบก่อนดูงาน");
+    return;
+  }
   try {
-    const response = await fetch("/api/tasks");
+    const response = await apiFetch("/api/tasks");
     if (!response.ok) throw new Error("Cannot load tasks");
     mobileTasks = await response.json();
   } catch {
@@ -261,7 +272,7 @@ function openTaskFromQuery() {
 }
 
 async function saveTaskToApi(task, exists) {
-  const response = await fetch(exists ? `/api/tasks/${encodeURIComponent(task.id)}` : "/api/tasks", {
+  const response = await apiFetch(exists ? `/api/tasks/${encodeURIComponent(task.id)}` : "/api/tasks", {
     method: exists ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(task)
@@ -271,7 +282,7 @@ async function saveTaskToApi(task, exists) {
 }
 
 async function patchTaskToApi(taskId, patch) {
-  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+  const response = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch)
@@ -281,6 +292,7 @@ async function patchTaskToApi(taskId, patch) {
 }
 
 function renderMobile() {
+  document.body.dataset.view = "dashboard";
   const today = new Date("2026-05-16T00:00:00+07:00");
   const dueTasks = mobileTasks.filter((task) => {
     const diff = (new Date(`${task.dueDate}T00:00:00+07:00`).getTime() - today.getTime()) / 86400000;
@@ -335,15 +347,23 @@ function renderDashboard({ tasks, dueTasks, doneTasks }) {
 
   return `
     <div class="dashboard-grid">
-      <section class="hero-summary">
-        <h2>ภาพรวมงานวันนี้</h2>
-        <div class="summary-stats">
-          <div class="summary-stat todo"><span>ต้องทำ</span><strong>${todoTasks.length}</strong></div>
-          <div class="summary-stat progress"><span>กำลังทำ</span><strong>${progressTasks.length}</strong></div>
-          <div class="summary-stat done"><span>เสร็จแล้ว</span><strong>${completedTasks.length}</strong></div>
+      <section class="dashboard-hero">
+        <div class="hero-summary">
+          <h2>ภาพรวมงานวันนี้</h2>
+          <div class="summary-stats">
+            <div class="summary-stat todo"><span>ต้องทำ</span><strong>${todoTasks.length}</strong></div>
+            <div class="summary-stat progress"><span>กำลังทำ</span><strong>${progressTasks.length}</strong></div>
+            <div class="summary-stat done"><span>เสร็จแล้ว</span><strong>${completedTasks.length}</strong></div>
+          </div>
+          <div class="progress-track"><div class="progress-fill" style="width: ${progress}%"></div></div>
+          <div class="summary-foot"><span>ความคืบหน้าโดยรวม</span><strong>${progress}%</strong></div>
         </div>
-        <div class="progress-track"><div class="progress-fill" style="width: ${progress}%"></div></div>
-        <div class="summary-foot"><span>ความคืบหน้าโดยรวม</span><strong>${progress}%</strong></div>
+        <div class="boss-mascot" aria-hidden="true">
+          <div class="boss-cat">
+            <div class="boss-face"></div>
+            <div class="boss-tie"></div>
+          </div>
+        </div>
       </section>
 
       <section class="important-section">
@@ -426,6 +446,7 @@ function renderMiniColumn(title, tasks, status) {
 }
 
 function renderTeamSettings() {
+  document.body.dataset.view = "settings";
   mobileElements.sectionTitle.textContent = "ทีมและสมาชิก";
   mobileElements.sectionSubtitle.textContent = teamState.activeOrganization
     ? teamState.activeOrganization.name
@@ -460,11 +481,13 @@ function renderTeamSettings() {
 }
 
 async function renderMyProfile() {
+  document.body.dataset.view = "profile";
   await loadTeamState();
   renderProfilePage(teamState.user, myKpi, true);
 }
 
 function renderProfilePage(user, kpi, editable) {
+  document.body.dataset.view = "profile";
   mobileElements.sectionTitle.textContent = editable ? "โปรไฟล์ของฉัน" : "โปรไฟล์สมาชิก";
   mobileElements.sectionSubtitle.textContent = user?.position || user?.department || "ข้อมูลผู้ใช้และ KPI";
   const avatar = user?.avatarUrl || user?.pictureUrl || "";

@@ -325,6 +325,8 @@ function normalizeTask(input, existingTask) {
     assignee: String(input.assignee || "Unassigned").trim(),
     assigneeUserId: String(input.assigneeUserId || existingTask?.assigneeUserId || "").trim(),
     organizationId: String(input.organizationId || existingTask?.organizationId || "").trim(),
+    createdByUserId: String(input.createdByUserId || existingTask?.createdByUserId || "").trim(),
+    createdByLineUserId: String(input.createdByLineUserId || existingTask?.createdByLineUserId || "").trim(),
     dueDate: String(input.dueDate || new Date(Date.now() + 86400000).toISOString().slice(0, 10)),
     tags: Array.isArray(input.tags) ? input.tags.map(String).map((tag) => tag.trim()).filter(Boolean) : [],
     activity: Array.isArray(input.activity) ? input.activity : existingTask?.activity || []
@@ -640,6 +642,7 @@ async function findAssigneeByText(query) {
 }
 
 async function createTaskFromLineText(text, event, tasks) {
+  const currentUser = await getLineUserFromEvent(event);
   const assigneePhrase = parseAssigneePhrase(text);
   const assigneeUser = await findAssigneeByText(assigneePhrase.assigneeQuery);
   const parsed = parseDueDateFromText(assigneePhrase.cleanedText);
@@ -652,8 +655,10 @@ async function createTaskFromLineText(text, event, tasks) {
       project: "LINE",
       status: "todo",
       priority: /ด่วน|urgent|สำคัญ/.test(text) ? "high" : "medium",
-      assignee: assigneeUser?.displayName || getRequesterName(event),
-      assigneeUserId: assigneeUser?.id || "",
+      assignee: assigneeUser?.displayName || currentUser.displayName || getRequesterName(event),
+      assigneeUserId: assigneeUser?.id || currentUser.id,
+      createdByUserId: currentUser.id,
+      createdByLineUserId: currentUser.lineUserId,
       dueDate: parsed.dueDate,
       tags: ["LINE"],
       activity: [{ id: `activity-${Date.now()}`, text: "สร้างจากข้อความ LINE แบบอัตโนมัติ", time: "ตอนนี้" }]
@@ -1043,6 +1048,7 @@ async function upsertAppUserFromLineProfile(profile) {
   const users = await readJsonFile(usersFile, []);
   const existingUser = users.find((user) => user.lineUserId === lineUserId);
   const user = {
+    ...(existingUser || {}),
     id: existingUser?.id || createId("user"),
     lineUserId,
     displayName: String(profile.displayName || existingUser?.displayName || "LINE user"),
@@ -1096,6 +1102,58 @@ async function getMembershipsForUser(userId) {
 function canManageMembers(members, userId, organizationId) {
   const membership = members.find((member) => member.userId === userId && member.organizationId === organizationId);
   return Boolean(membership && ["Admin", "Manager"].includes(membership.role));
+}
+
+function getUserIdentityKeys(user) {
+  return [user?.id, user?.lineUserId, user?.displayName]
+    .filter(Boolean)
+    .map((item) => String(item).trim().toLowerCase());
+}
+
+async function getOrganizationIdsForUser(userId) {
+  const members = await readJsonFile(membersFile, []);
+  return members
+    .filter((member) => member.userId === userId && member.status === "active")
+    .map((member) => member.organizationId);
+}
+
+function canAccessTask(task, user, organizationIds) {
+  if (!user) return false;
+  if (user.lineUserId === "dev-user") return true;
+  if (task.createdByUserId && task.createdByUserId === user.id) return true;
+  if (task.createdByLineUserId && task.createdByLineUserId === user.lineUserId) return true;
+  if (task.assigneeUserId && task.assigneeUserId === user.id) return true;
+  if (task.organizationId && organizationIds.includes(task.organizationId)) return true;
+
+  const keys = getUserIdentityKeys(user);
+  return !task.organizationId && !task.assigneeUserId && keys.includes(String(task.assignee || "").trim().toLowerCase());
+}
+
+async function getVisibleTasksForUser(user, tasks = null) {
+  const [allTasks, organizationIds] = await Promise.all([
+    tasks ? Promise.resolve(tasks) : readTasks(),
+    getOrganizationIdsForUser(user.id)
+  ]);
+  return allTasks.filter((task) => canAccessTask(task, user, organizationIds));
+}
+
+async function getLineUserFromEvent(event) {
+  const lineUserId = event.source?.userId || "dev-user";
+  const users = await readJsonFile(usersFile, []);
+  let user = users.find((item) => item.lineUserId === lineUserId);
+  if (!user) {
+    user = {
+      id: createId("user"),
+      lineUserId,
+      displayName: lineUserId === "dev-user" ? "Dev User" : "LINE user",
+      pictureUrl: "",
+      email: "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    await writeJsonFile(usersFile, [user, ...users]);
+  }
+  return user;
 }
 
 async function handleTeamApi(request, response) {
@@ -1335,11 +1393,13 @@ async function handleLineWebhookEvent(event) {
   await rememberLineTarget(event.source);
 
   const text = event.message.text.trim();
+  const currentUser = await getLineUserFromEvent(event);
   const tasks = await readTasks();
-  const openTasks = tasks.filter((task) => task.status !== "done");
+  const visibleTasks = await getVisibleTasksForUser(currentUser, tasks);
+  const openTasks = visibleTasks.filter((task) => task.status !== "done");
 
   if (text === "สรุป" || text === "งาน" || text.toLowerCase() === "summary") {
-    await replyLine(event.replyToken, buildTaskSummary(tasks));
+    await replyLine(event.replyToken, buildTaskSummary(visibleTasks));
     return;
   }
 
@@ -1364,7 +1424,7 @@ async function handleLineWebhookEvent(event) {
   }
 
   if (text === "งานวันนี้" || text === "วันนี้" || text.toLowerCase() === "today") {
-    await replyLine(event.replyToken, buildTaskList("งานวันนี้", tasks.filter((task) => task.dueDate === todayDate())));
+    await replyLine(event.replyToken, buildTaskList("งานวันนี้", visibleTasks.filter((task) => task.dueDate === todayDate())));
     return;
   }
 
@@ -1374,19 +1434,12 @@ async function handleLineWebhookEvent(event) {
   }
 
   if (text === "งานของฉัน" || text.toLowerCase() === "mine") {
-    const requester = getRequesterName(event);
-    await replyLine(
-      event.replyToken,
-      buildTaskList(
-        "งานของฉัน",
-        openTasks.filter((task) => task.assignee === requester || task.assignee.toLowerCase() === "narin")
-      )
-    );
+    await replyLine(event.replyToken, buildTaskList("งานของฉัน", openTasks));
     return;
   }
 
   if (text.startsWith("ดูงาน ") || text.toLowerCase().startsWith("show ")) {
-    const task = findTaskByQuery(tasks, text.replace("ดูงาน ", "").replace(/^show /i, ""));
+    const task = findTaskByQuery(visibleTasks, text.replace("ดูงาน ", "").replace(/^show /i, ""));
     if (task) {
       await replyLineMessages(event.replyToken, [buildTaskFlex(task, "รายละเอียดงาน")]);
     } else {
@@ -1478,8 +1531,10 @@ async function handleLineWebhookEvent(event) {
         project: "LINE",
         status: "todo",
         priority: "medium",
-        assignee: assigneeUser?.displayName || getRequesterName(event),
-        assigneeUserId: assigneeUser?.id || "",
+      assignee: assigneeUser?.displayName || currentUser.displayName || getRequesterName(event),
+      assigneeUserId: assigneeUser?.id || currentUser.id,
+      createdByUserId: currentUser.id,
+      createdByLineUserId: currentUser.lineUserId,
         dueDate: parsed.dueDate,
         tags: ["LINE"],
         activity: [{ id: `activity-${Date.now()}`, text: "สร้างจาก LINE webhook", time: "ตอนนี้" }]
@@ -1574,9 +1629,11 @@ async function handleTasksApi(request, response) {
   try {
     const url = new URL(request.url || "/", `http://${host}:${port}`);
     const id = decodeURIComponent(url.pathname.replace("/api/tasks", "").replace(/^\/+/, ""));
+    const currentUser = await getCurrentUser(request);
+    const organizationIds = await getOrganizationIdsForUser(currentUser.id);
 
     if (request.method === "GET" && !id) {
-      sendJson(response, 200, await readTasks());
+      sendJson(response, 200, await getVisibleTasksForUser(currentUser));
       return;
     }
 
@@ -1587,6 +1644,10 @@ async function handleTasksApi(request, response) {
         {
           ...input,
           id: input.id || `task-${Date.now()}`,
+          assignee: input.assignee || currentUser.displayName || "Unassigned",
+          assigneeUserId: input.assigneeUserId || currentUser.id,
+          createdByUserId: currentUser.id,
+          createdByLineUserId: currentUser.lineUserId,
           activity: [
             { id: `activity-${Date.now()}`, text: "สร้างงานใหม่", time: "ตอนนี้" },
             ...(Array.isArray(input.activity) ? input.activity : [])
@@ -1606,6 +1667,10 @@ async function handleTasksApi(request, response) {
       const existingTask = tasks.find((task) => task.id === id);
       if (!existingTask) {
         sendJson(response, 404, { error: "Task not found" });
+        return;
+      }
+      if (!canAccessTask(existingTask, currentUser, organizationIds)) {
+        sendJson(response, 403, { error: "You do not have access to this task" });
         return;
       }
       const task = normalizeTask(
@@ -1635,6 +1700,10 @@ async function handleTasksApi(request, response) {
         sendJson(response, 404, { error: "Task not found" });
         return;
       }
+      if (!canAccessTask(existingTask, currentUser, organizationIds)) {
+        sendJson(response, 403, { error: "You do not have access to this task" });
+        return;
+      }
       const task = normalizeTask(
         {
           ...existingTask,
@@ -1657,6 +1726,15 @@ async function handleTasksApi(request, response) {
 
     if (request.method === "DELETE" && id) {
       const tasks = await readTasks();
+      const existingTask = tasks.find((task) => task.id === id);
+      if (!existingTask) {
+        sendJson(response, 404, { error: "Task not found" });
+        return;
+      }
+      if (!canAccessTask(existingTask, currentUser, organizationIds)) {
+        sendJson(response, 403, { error: "You do not have access to this task" });
+        return;
+      }
       const nextTasks = tasks.filter((task) => task.id !== id);
       await writeTasks(nextTasks);
       sendJson(response, 200, { ok: true });
