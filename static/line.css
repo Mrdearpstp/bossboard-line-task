@@ -1339,20 +1339,6 @@ body[data-view="profile"] .line-status-card {
   overflow: hidden;
 }
 
-.create-task-page::after {
-  content: "";
-  position: absolute;
-  right: 18px;
-  bottom: 78px;
-  width: 86px;
-  height: 58px;
-  border-radius: 38px 38px 18px 18px;
-  background: linear-gradient(180deg, #ff9a1f, #f97316);
-  border: 2px solid #1d1c18;
-  opacity: 0.92;
-  pointer-events: none;
-}
-
 .create-task-page label {
   display: grid;
   gap: 8px;
