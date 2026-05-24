@@ -1077,6 +1077,221 @@ function flexInfoRow(label, value) {
   };
 }
 
+function buildTaskFlex(task, heading = "จดสำเร็จ", changeSummary = "") {
+  const appUrl = getAppUrl(`/line.html?task=${encodeURIComponent(task.id)}`);
+  const rescheduleUrl = getAppUrl(`/line.html?task=${encodeURIComponent(task.id)}&action=reschedule`);
+  const openAppUrl = getAppUrl("/line.html");
+  const status = getFlexStatus(task.status);
+  const priority = getFlexPriority(task.priority);
+  const progress = getFlexProgress(task);
+  const dueText = task.dueTime ? `${task.dueDate} ${task.dueTime}` : task.dueDate || "ยังไม่ตั้งกำหนด";
+  const projectName = task.project || "LINE";
+
+  return {
+    type: "flex",
+    altText: `${heading}: ${task.title}`,
+    contents: {
+      type: "bubble",
+      size: "mega",
+      styles: {
+        header: { backgroundColor: "#FFF4E8" },
+        body: { backgroundColor: "#FFFFFF" },
+        footer: { backgroundColor: "#FFFFFF" }
+      },
+      header: {
+        type: "box",
+        layout: "vertical",
+        paddingAll: "18px",
+        contents: [
+          {
+            type: "box",
+            layout: "horizontal",
+            spacing: "md",
+            alignItems: "center",
+            contents: [
+              {
+                type: "box",
+                layout: "vertical",
+                width: "42px",
+                height: "42px",
+                cornerRadius: "14px",
+                backgroundColor: "#FF7A00",
+                justifyContent: "center",
+                alignItems: "center",
+                contents: [{ type: "text", text: status.icon, size: "xl", align: "center" }]
+              },
+              {
+                type: "box",
+                layout: "vertical",
+                flex: 1,
+                contents: [
+                  { type: "text", text: `${heading} ${status.icon}`, weight: "bold", size: "xl", color: "#1F1A17", wrap: true },
+                  { type: "text", text: "ตรวจสอบรายละเอียดและเลือกทำต่อด้านล่าง", margin: "xs", size: "xs", color: "#7A6A5E", wrap: true }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "md",
+        paddingAll: "18px",
+        contents: [
+          {
+            type: "box",
+            layout: "horizontal",
+            spacing: "sm",
+            contents: [
+              flexPill(projectName, "#FFF1DE", "#F97316"),
+              flexPill(status.label, status.bg, status.color),
+              flexPill(priority.label, priority.bg, priority.color)
+            ]
+          },
+          { type: "text", text: task.title || "Untitled task", weight: "bold", size: "xl", color: "#15110D", wrap: true },
+          {
+            type: "box",
+            layout: "vertical",
+            backgroundColor: "#FFF8EF",
+            cornerRadius: "16px",
+            paddingAll: "14px",
+            spacing: "sm",
+            contents: [
+              flexIconInfoRow("📅", "ครบกำหนด", dueText),
+              flexIconInfoRow("👤", "ผู้รับผิดชอบ", task.assignee || "ฉัน"),
+              flexIconInfoRow("📌", "สถานะ", `${status.label} · ${priority.label}`)
+            ]
+          },
+          {
+            type: "box",
+            layout: "vertical",
+            spacing: "sm",
+            contents: [
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  { type: "text", text: "ความคืบหน้า", size: "xs", color: "#7A6A5E", weight: "bold", flex: 1 },
+                  { type: "text", text: `${progress}%`, size: "xs", color: "#F97316", weight: "bold", align: "end" }
+                ]
+              },
+              {
+                type: "box",
+                layout: "vertical",
+                height: "8px",
+                backgroundColor: "#F1E6DA",
+                cornerRadius: "999px",
+                contents: [
+                  { type: "box", layout: "vertical", height: "8px", width: `${progress}%`, backgroundColor: "#FF7A00", cornerRadius: "999px", contents: [] }
+                ]
+              }
+            ]
+          },
+          {
+            type: "text",
+            text: task.description || "สร้างจากข้อความ LINE เปิดแอปเพื่อเติมรายละเอียดเพิ่มเติมได้",
+            wrap: true,
+            size: "sm",
+            color: "#65584E",
+            margin: "sm"
+          },
+          ...(changeSummary
+            ? [
+                {
+                  type: "box",
+                  layout: "vertical",
+                  backgroundColor: "#ECFFE9",
+                  cornerRadius: "14px",
+                  paddingAll: "12px",
+                  spacing: "xs",
+                  contents: [
+                    { type: "text", text: "อัปเดตล่าสุด", size: "xs", color: "#0E8A36", weight: "bold" },
+                    { type: "text", text: changeSummary, wrap: true, size: "sm", color: "#1F1A17" }
+                  ]
+                }
+              ]
+            : [])
+        ]
+      },
+      footer: {
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
+        paddingAll: "14px",
+        contents: [
+          { type: "button", style: "primary", height: "sm", color: "#FF7A00", action: { type: "uri", label: "แก้ไขรายละเอียด", uri: appUrl } },
+          { type: "box", layout: "horizontal", spacing: "sm", contents: [flexMessageButton("กำลังทำ", `กำลังทำ ${task.title}`), flexUriButton("เลื่อนกำหนด", rescheduleUrl)] },
+          { type: "box", layout: "horizontal", spacing: "sm", contents: [flexMessageButton("เสร็จ", `เสร็จ ${task.title}`), flexUriButton("เปิดแอป", openAppUrl)] }
+        ]
+      }
+    }
+  };
+}
+
+function getFlexStatus(status) {
+  const meta = {
+    todo: { label: "รอทำ", icon: "📝", color: "#805000", bg: "#FFF2CC" },
+    progress: { label: "กำลังทำ", icon: "🔥", color: "#C44D00", bg: "#FFE1C2" },
+    review: { label: "รอตรวจ", icon: "🔎", color: "#3156A8", bg: "#E7EEFF" },
+    done: { label: "เสร็จแล้ว", icon: "✅", color: "#0B8F3A", bg: "#E8FBEA" }
+  };
+  return meta[status] || meta.todo;
+}
+
+function getFlexPriority(priority) {
+  const meta = {
+    high: { label: "ด่วน", color: "#C62828", bg: "#FFE1E1" },
+    medium: { label: "ปกติ", color: "#A35A00", bg: "#FFF2CC" },
+    low: { label: "ไม่ด่วน", color: "#557060", bg: "#EDF7EE" }
+  };
+  return meta[priority] || meta.medium;
+}
+
+function getFlexProgress(task) {
+  if (task.status === "done") return 100;
+  if (task.status === "review") return 75;
+  if (task.status === "progress") return 55;
+  return task.priority === "high" ? 30 : 20;
+}
+
+function flexPill(text, backgroundColor, color) {
+  return {
+    type: "box",
+    layout: "vertical",
+    flex: 0,
+    backgroundColor,
+    cornerRadius: "999px",
+    paddingTop: "5px",
+    paddingBottom: "5px",
+    paddingStart: "10px",
+    paddingEnd: "10px",
+    contents: [{ type: "text", text: String(text || "-").slice(0, 20), size: "xs", weight: "bold", color, align: "center" }]
+  };
+}
+
+function flexIconInfoRow(icon, label, value) {
+  return {
+    type: "box",
+    layout: "horizontal",
+    spacing: "sm",
+    alignItems: "center",
+    contents: [
+      { type: "text", text: icon, size: "sm", flex: 0 },
+      { type: "text", text: label, size: "xs", color: "#7A6A5E", flex: 3 },
+      { type: "text", text: String(value || "-"), size: "xs", color: "#1F1A17", weight: "bold", wrap: true, flex: 6 }
+    ]
+  };
+}
+
+function flexMessageButton(label, text) {
+  return { type: "button", style: "secondary", height: "sm", action: { type: "message", label, text } };
+}
+
+function flexUriButton(label, uri) {
+  return { type: "button", style: "secondary", height: "sm", action: { type: "uri", label, uri } };
+}
+
 async function pushLine(to, text) {
   await callLineApi("push", {
     to,
