@@ -2080,7 +2080,8 @@ async function renderPersonalSettings() {
   const dueSoonTasks = mobileTasks.filter((task) => task.status !== "done" && isDueSoon(task)).length;
   const overdueTasks = mobileTasks.filter((task) => task.status !== "done" && isOverdue(task)).length;
   const connectedName = teamState.user?.displayName || "ยังไม่ทราบชื่อ";
-  const lineIdentity = teamState.user?.lineUserId || currentLineUserId || "เปิดผ่าน LINE เพื่อระบุตัวตน";
+  const rawLineIdentity = teamState.user?.lineUserId || currentLineUserId || "";
+  const lineIdentity = rawLineIdentity ? `${rawLineIdentity.slice(0, 6)}...${rawLineIdentity.slice(-4)}` : "เปิดผ่าน LINE เพื่อระบุตัวตน";
 
   mobileElements.taskList.innerHTML = `
     <div class="settings-screen">
