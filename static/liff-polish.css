@@ -1883,3 +1883,216 @@ body .app-header .profile-dot {
     flex-basis: 30px !important;
   }
 }
+
+/* Compact centered header v2: render a clean brand lockup independent of old logo rules. */
+body .app-header {
+  position: sticky !important;
+  display: block !important;
+  height: 72px !important;
+  min-height: 72px !important;
+}
+
+body .app-header .menu-button {
+  position: absolute !important;
+  left: 14px !important;
+  top: calc(env(safe-area-inset-top, 0px) + 16px) !important;
+  z-index: 3 !important;
+}
+
+body .app-header .header-actions {
+  position: absolute !important;
+  right: 14px !important;
+  top: calc(env(safe-area-inset-top, 0px) + 16px) !important;
+  z-index: 3 !important;
+  width: auto !important;
+  min-width: 0 !important;
+}
+
+body .app-header .brand-lockup {
+  position: absolute !important;
+  left: 50% !important;
+  top: calc(env(safe-area-inset-top, 0px) + 16px) !important;
+  z-index: 2 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  width: 172px !important;
+  max-width: calc(100% - 156px) !important;
+  height: 40px !important;
+  min-width: 0 !important;
+  transform: translateX(-50%) !important;
+  overflow: hidden !important;
+}
+
+body .app-header .brand-lockup > * {
+  display: none !important;
+}
+
+body .app-header .brand-lockup::before {
+  content: "" !important;
+  display: block !important;
+  flex: 0 0 30px !important;
+  width: 30px !important;
+  height: 30px !important;
+  border-radius: 999px !important;
+  background: #fff url("/brand/bossboard-mascot.png") center 28% / cover no-repeat !important;
+  box-shadow: 0 5px 12px rgba(255, 135, 8, 0.24) !important;
+  opacity: 1 !important;
+}
+
+body .app-header .brand-lockup::after {
+  content: "BossBoard" !important;
+  display: block !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  color: var(--bb-text) !important;
+  font-size: 22px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  opacity: 1 !important;
+}
+
+@media (max-width: 390px) {
+  body .app-header .brand-lockup {
+    width: 138px !important;
+    max-width: calc(100% - 148px) !important;
+  }
+
+  body .app-header .brand-lockup::before {
+    width: 26px !important;
+    height: 26px !important;
+    flex-basis: 26px !important;
+  }
+
+  body .app-header .brand-lockup::after {
+    font-size: 18px !important;
+  }
+}
+
+/* Header v3: real DOM brand element, shared by every in-app page. */
+body .app-header {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 60 !important;
+  display: grid !important;
+  grid-template-columns: 44px minmax(0, 1fr) 92px !important;
+  align-items: center !important;
+  gap: 8px !important;
+  width: calc(100% + 32px) !important;
+  max-width: none !important;
+  height: auto !important;
+  min-height: 70px !important;
+  margin: -14px -16px 12px !important;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 9px !important;
+  overflow: hidden !important;
+  background: rgba(255, 248, 239, 0.96) !important;
+  border: 0 !important;
+  border-bottom: 1px solid rgba(234, 215, 193, 0.86) !important;
+  border-radius: 0 0 20px 20px !important;
+  box-shadow: 0 8px 20px rgba(74, 42, 12, 0.08) !important;
+}
+
+body .app-header .brand-lockup {
+  display: none !important;
+}
+
+body .app-header .brand-center {
+  grid-column: 2 !important;
+  justify-self: center !important;
+  align-self: center !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  width: 100% !important;
+  max-width: 176px !important;
+  min-width: 0 !important;
+  height: 42px !important;
+  overflow: hidden !important;
+  color: var(--bb-text) !important;
+  text-decoration: none !important;
+}
+
+body .app-header .brand-center img {
+  flex: 0 0 32px !important;
+  width: 32px !important;
+  height: 32px !important;
+  object-fit: cover !important;
+  object-position: 50% 28% !important;
+  border-radius: 999px !important;
+  background: #fff !important;
+  box-shadow: 0 6px 12px rgba(255, 135, 8, 0.24) !important;
+}
+
+body .app-header .brand-center span {
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  font-size: 22px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+}
+
+body .app-header .brand-center strong {
+  color: var(--bb-orange) !important;
+}
+
+body .app-header .menu-button {
+  grid-column: 1 !important;
+  position: static !important;
+  justify-self: start !important;
+}
+
+body .app-header .header-actions {
+  grid-column: 3 !important;
+  position: static !important;
+  justify-self: end !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 6px !important;
+  width: 92px !important;
+  min-width: 92px !important;
+}
+
+body .app-header .menu-button,
+body .app-header .round-button,
+body .app-header .profile-dot {
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  border-radius: 14px !important;
+}
+
+@media (max-width: 390px) {
+  body .app-header {
+    grid-template-columns: 42px minmax(0, 1fr) 88px !important;
+    gap: 6px !important;
+  }
+
+  body .app-header .brand-center {
+    max-width: 138px !important;
+    gap: 5px !important;
+  }
+
+  body .app-header .brand-center img {
+    width: 28px !important;
+    height: 28px !important;
+    flex-basis: 28px !important;
+  }
+
+  body .app-header .brand-center span {
+    font-size: 18px !important;
+  }
+
+  body .app-header .header-actions {
+    width: 88px !important;
+    min-width: 88px !important;
+  }
+}
