@@ -2096,3 +2096,121 @@ body .app-header .profile-dot {
     min-width: 88px !important;
   }
 }
+
+/* Header hard reset v4: never bleed outside the phone viewport. */
+body .phone-app > .app-header {
+  position: sticky !important;
+  top: 0 !important;
+  left: auto !important;
+  right: auto !important;
+  z-index: 80 !important;
+  display: grid !important;
+  grid-template-columns: 42px minmax(0, 1fr) 88px !important;
+  align-items: center !important;
+  gap: 8px !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 64px !important;
+  margin: 0 0 12px !important;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 10px 8px !important;
+  overflow: hidden !important;
+  transform: none !important;
+  box-sizing: border-box !important;
+  background: rgba(255, 248, 239, 0.98) !important;
+  border: 0 !important;
+  border-bottom: 1px solid rgba(234, 215, 193, 0.86) !important;
+  border-radius: 0 0 18px 18px !important;
+}
+
+body .phone-app > .app-header > .menu-button,
+body .phone-app > .app-header > .brand-center,
+body .phone-app > .app-header > .header-actions {
+  position: static !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: none !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+body .phone-app > .app-header > .menu-button {
+  grid-column: 1 !important;
+  justify-self: start !important;
+}
+
+body .phone-app > .app-header > .brand-center {
+  grid-column: 2 !important;
+  justify-self: center !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  width: 100% !important;
+  max-width: 150px !important;
+  height: 40px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  color: var(--bb-text) !important;
+  text-decoration: none !important;
+}
+
+body .phone-app > .app-header > .brand-center img {
+  display: block !important;
+  flex: 0 0 28px !important;
+  width: 28px !important;
+  height: 28px !important;
+  object-fit: cover !important;
+  object-position: 50% 28% !important;
+  border-radius: 999px !important;
+  background: #fff !important;
+  box-shadow: 0 4px 10px rgba(255, 135, 8, 0.2) !important;
+}
+
+body .phone-app > .app-header > .brand-center span {
+  display: block !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  font-size: 19px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+}
+
+body .phone-app > .app-header > .brand-center strong {
+  color: var(--bb-orange) !important;
+}
+
+body .phone-app > .app-header > .header-actions {
+  grid-column: 3 !important;
+  justify-self: end !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 6px !important;
+  width: 88px !important;
+  max-width: 88px !important;
+}
+
+body .phone-app > .app-header .menu-button,
+body .phone-app > .app-header .round-button,
+body .phone-app > .app-header .profile-dot {
+  width: 38px !important;
+  height: 38px !important;
+  min-width: 38px !important;
+  max-width: 38px !important;
+  padding: 0 !important;
+  border-radius: 13px !important;
+}
+
+body .phone-app > .app-header .brand-lockup,
+body .phone-app > .app-header .brand-logo-art,
+body .phone-app > .app-header .brand-text,
+body .phone-app > .app-header .brand-mark {
+  display: none !important;
+}
