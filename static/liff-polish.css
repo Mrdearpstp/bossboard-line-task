@@ -1781,3 +1781,105 @@ body[data-view="settings"] .phone-app {
     grid-column: 2 / -1 !important;
   }
 }
+
+/* Header correction: keep the LINE webview top bar readable on narrow screens. */
+body .app-header {
+  display: grid !important;
+  grid-template-columns: 44px minmax(0, 1fr) 94px !important;
+  align-items: center !important;
+  column-gap: 8px !important;
+  width: calc(100% + 32px) !important;
+  max-width: none !important;
+  min-height: 70px !important;
+  margin: -14px -16px 12px !important;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 9px !important;
+  overflow: hidden !important;
+}
+
+body .app-header .menu-button {
+  grid-column: 1 !important;
+  justify-self: start !important;
+}
+
+body .app-header .brand-lockup {
+  grid-column: 2 !important;
+  justify-self: center !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+body .app-header .brand-mark {
+  flex: 0 0 34px !important;
+  width: 34px !important;
+  height: 34px !important;
+}
+
+body .app-header .brand-text {
+  flex: 0 1 auto !important;
+  min-width: 0 !important;
+  max-width: calc(100% - 42px) !important;
+  overflow: hidden !important;
+}
+
+body .app-header h1 {
+  display: block !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  font-size: 24px !important;
+  line-height: 1.05 !important;
+}
+
+body .app-header .tagline,
+body .app-header .eyebrow {
+  display: none !important;
+}
+
+body .app-header .header-actions {
+  grid-column: 3 !important;
+  justify-self: end !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 6px !important;
+  width: 94px !important;
+  min-width: 94px !important;
+}
+
+body .app-header .menu-button,
+body .app-header .round-button,
+body .app-header .profile-dot {
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  border-radius: 14px !important;
+}
+
+@media (max-width: 380px) {
+  body .app-header {
+    grid-template-columns: 42px minmax(0, 1fr) 88px !important;
+    column-gap: 6px !important;
+  }
+
+  body .app-header .header-actions {
+    width: 88px !important;
+    min-width: 88px !important;
+  }
+
+  body .app-header h1 {
+    font-size: 21px !important;
+  }
+
+  body .app-header .brand-mark {
+    width: 30px !important;
+    height: 30px !important;
+    flex-basis: 30px !important;
+  }
+}
