@@ -7,23 +7,32 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./static/line.css" />
+    <link rel="stylesheet" href="./static/liff-polish.css" />
     <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/versions/2.22.3/sdk.js"></script>
   </head>
   <body>
     <main class="phone-app">
       <header class="app-header">
-        <button class="menu-button" type="button" aria-label="Menu">☰</button>
-        <div>
+        <button class="menu-button" type="button" aria-label="Menu"><span class="material-symbols-outlined">menu</span><span class="menu-label">เมนู</span></button>
+        <div class="brand-lockup">
+          <img class="brand-mark" src="/brand/bossboard-mascot.png" alt="BossBoard mascot" />
+          <img class="brand-logo-art" src="/brand/bossboard-logo.png" alt="BossBoard" />
+          <div class="brand-text">
           <p class="eyebrow">LINE Personal Task</p>
           <h1><span>Boss</span>Board</h1>
           <p class="tagline">งานส่วนตัว เตือนตัวเองผ่าน LINE</p>
+          </div>
         </div>
         <div class="header-actions">
-          <button class="round-button" type="button" aria-label="Notifications">🔔</button>
+          <button class="round-button" type="button" aria-label="Notifications"><span class="material-symbols-outlined">notifications</span></button>
           <div class="profile-dot">👤</div>
         </div>
       </header>
+      <div class="boss-marquee" aria-hidden="true">
+        <span>⚡ จัดการงานให้เสร็จ ⚡ ทำเลย ⚡ BOSS MODE ACTIVATED ⚡ THE BOSS IS WATCHING ⚡ NO EXCUSES ⚡</span>
+      </div>
 
       <section class="line-status-card">
         <div>
@@ -45,10 +54,10 @@
     </main>
 
     <nav class="bottom-nav">
-      <button class="active" data-nav-view="home" type="button"><span>⌂</span>หน้าหลัก</button>
-      <button data-nav-view="projects" type="button"><span>▣</span>โปรเจกต์</button>
-      <button data-nav-view="create" type="button"><span>+</span>เพิ่มงาน</button>
-      <button data-nav-view="tasks" type="button"><span>♙</span>งานของฉัน</button>
+      <button class="active" data-nav-view="home" type="button"><span class="material-symbols-outlined">home</span>หน้าหลัก</button>
+      <button data-nav-view="projects" type="button"><span class="material-symbols-outlined">folder_open</span>โปรเจกต์</button>
+      <button data-nav-view="create" type="button"><span class="material-symbols-outlined">add</span>เพิ่มงาน</button>
+      <button data-nav-view="tasks" type="button"><span class="material-symbols-outlined">task_alt</span>งานของฉัน</button>
       <button data-nav-view="line" type="button"><span>LINE</span>LINE</button>
     </nav>
 
@@ -69,6 +78,14 @@
           รายละเอียด
           <textarea id="mobileTaskDescription"></textarea>
         </label>
+        <label>
+          โปรเจกต์
+          <select id="mobileTaskProject"></select>
+        </label>
+        <label id="mobileTaskNewProjectLabel" class="hidden">
+          ชื่อโปรเจกต์ใหม่
+          <input id="mobileTaskNewProject" />
+        </label>
         <div class="form-row">
           <label>
             ผู้รับผิดชอบ
@@ -77,6 +94,10 @@
           <label>
             วันครบกำหนด
             <input id="mobileTaskDueDate" type="date" required />
+          </label>
+          <label>
+            เวลา
+            <input id="mobileTaskDueTime" type="time" />
           </label>
         </div>
         <div class="form-row">
@@ -98,10 +119,15 @@
             </select>
           </label>
         </div>
-        <button class="save-button" type="submit">บันทึก</button>
+        <div class="dialog-actions-row">
+          <button class="save-button" type="submit">บันทึก</button>
+          <button id="mobileTaskDeleteButton" class="danger-outline-button hidden" type="button">ลบงาน</button>
+        </div>
       </form>
     </dialog>
 
     <script src="./static/line.js"></script>
+    <script src="./static/undo-overrides.js"></script>
+    <script src="./static/feed-overrides.js"></script>
   </body>
 </html>
