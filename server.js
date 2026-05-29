@@ -1702,6 +1702,12 @@ function getBangkokParts(date = new Date()) {
   };
 }
 
+function getBangkokTimestamp(dateKey, timeKey = "00:00") {
+  const normalizedTime = normalizeDueTime(timeKey) || "00:00";
+  const timestamp = new Date(`${dateKey}T${normalizedTime}:00+07:00`).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 function getDateDiffInDays(dateA, dateB) {
   const start = new Date(`${dateA}T00:00:00+07:00`).getTime();
   const end = new Date(`${dateB}T00:00:00+07:00`).getTime();
@@ -1721,6 +1727,15 @@ function shouldSendReminder(settings, bucket, dateKey) {
   return settings.sent?.[bucket] !== dateKey;
 }
 
+function isValidReminderCronRequest(request, url) {
+  const secret = process.env.REMINDER_CRON_SECRET || "";
+  if (!secret) return isLocalHttpRequest(request);
+  return (
+    url.searchParams.get("secret") === secret ||
+    request.headers["x-reminder-cron-secret"] === secret
+  );
+}
+
 async function markReminderSent(user, settings, bucket, dateKey) {
   await saveReminderSettingsForUser(user, {
     ...settings,
@@ -1729,6 +1744,37 @@ async function markReminderSent(user, settings, bucket, dateKey) {
       [bucket]: dateKey
     }
   });
+}
+
+function getTaskReminderBucket(task) {
+  return `task:${task.id}:${task.dueDate}:${task.dueTime || ""}`;
+}
+
+function shouldSendTaskDueReminder(task, settings, dateKey, timeKey) {
+  if (!task.dueDate || !task.dueTime || task.status === "done") return false;
+  const dueAt = getBangkokTimestamp(task.dueDate, task.dueTime);
+  const nowAt = getBangkokTimestamp(dateKey, timeKey);
+  if (!dueAt || !nowAt) return false;
+  const lateByMs = nowAt - dueAt;
+  const reminderWindowMs = 10 * 60 * 1000;
+  if (lateByMs < 0 || lateByMs > reminderWindowMs) return false;
+  return settings.sent?.[getTaskReminderBucket(task)] !== `${task.dueDate} ${task.dueTime}`;
+}
+
+async function sendTaskDueRemindersToUser(user, tasks, settings, dateKey, timeKey) {
+  const dueNowTasks = tasks.filter((task) => shouldSendTaskDueReminder(task, settings, dateKey, timeKey)).slice(0, 5);
+  if (!isPushableLineUserId(user.lineUserId) || !dueNowTasks.length) return settings;
+
+  const messages = dueNowTasks.map((task) =>
+    buildTaskFlex(task, "ถึงเวลาแล้ว", `ถึงเวลา ${formatTaskDueAt(task)}\nถ้ายังไม่พร้อม กดเลื่อนกำหนดได้เลย`)
+  );
+  await pushLineMessages(user.lineUserId, messages);
+
+  const sent = { ...(settings.sent || {}) };
+  for (const task of dueNowTasks) {
+    sent[getTaskReminderBucket(task)] = `${task.dueDate} ${task.dueTime}`;
+  }
+  return saveReminderSettingsForUser(user, { ...settings, sent });
 }
 
 async function sendReminderToUser(user, tasks, title, bucket, dateKey) {
@@ -1751,19 +1797,18 @@ async function runReminderTick() {
       if (!settings.enabled || isWithinQuietHours(settings, timeKey)) continue;
       const visibleTasks = await getVisibleTasksForUser(user, tasks);
       const openTasks = visibleTasks.filter((task) => task.status !== "done");
+      const latestSettings = await sendTaskDueRemindersToUser(user, openTasks, settings, dateKey, timeKey);
       if (settings.dailySummaryEnabled && settings.dailySummaryTime === timeKey && shouldSendReminder(settings, "dailySummary", dateKey)) {
         await sendReminderToUser(user, openTasks, "สรุปงานวันนี้จาก BossBoard", "dailySummary", dateKey);
-        continue;
       }
-      if (settings.dueSoonEnabled && settings.dueSoonTime === timeKey && shouldSendReminder(settings, "dueSoon", dateKey)) {
+      if (latestSettings.dueSoonEnabled && latestSettings.dueSoonTime === timeKey && shouldSendReminder(latestSettings, "dueSoon", dateKey)) {
         const dueSoonTasks = openTasks.filter((task) => {
           const diff = getDateDiffInDays(task.dueDate, dateKey);
-          return diff >= 0 && diff <= settings.dueSoonDays;
+          return diff >= 0 && diff <= latestSettings.dueSoonDays;
         });
-        await sendReminderToUser(user, dueSoonTasks, `งานที่ใกล้ครบกำหนดใน ${settings.dueSoonDays} วัน`, "dueSoon", dateKey);
-        continue;
+        await sendReminderToUser(user, dueSoonTasks, `งานที่ใกล้ครบกำหนดใน ${latestSettings.dueSoonDays} วัน`, "dueSoon", dateKey);
       }
-      if (settings.overdueEnabled && settings.reminderTime === timeKey && shouldSendReminder(settings, "overdue", dateKey)) {
+      if (latestSettings.overdueEnabled && latestSettings.reminderTime === timeKey && shouldSendReminder(latestSettings, "overdue", dateKey)) {
         const overdueTasks = openTasks.filter((task) => getDateDiffInDays(task.dueDate, dateKey) < 0);
         await sendReminderToUser(user, overdueTasks, "งานเลยกำหนดที่ควรรีบดู", "overdue", dateKey);
       }
@@ -2427,6 +2472,16 @@ async function handleLineApi(request, response) {
         isMessagingConfigured: Boolean(channelAccessToken && channelSecret),
         hasPushTarget: Boolean(targetId)
       });
+      return;
+    }
+
+    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/line/reminder-tick") {
+      if (!isValidReminderCronRequest(request, url)) {
+        sendJson(response, 403, { error: "Invalid reminder cron secret" });
+        return;
+      }
+      await runReminderTick();
+      sendJson(response, 200, { ok: true });
       return;
     }
 
