@@ -397,6 +397,10 @@ function normalizeReminderSettings(input = {}, existing = {}) {
   const reminderTime = String(input.reminderTime || existing.reminderTime || "09:00").slice(0, 5);
   const dueSoonTime = String(input.dueSoonTime || existing.dueSoonTime || reminderTime || "09:00").slice(0, 5);
   const dailySummaryTime = String(input.dailySummaryTime || existing.dailySummaryTime || "08:30").slice(0, 5);
+  const defaultReminderTime = String(input.defaultReminderTime || existing.defaultReminderTime || reminderTime || "09:00").slice(0, 5);
+  const defaultPriority = ["low", "medium", "high"].includes(input.defaultPriority || existing.defaultPriority)
+    ? input.defaultPriority || existing.defaultPriority
+    : "medium";
   return {
     lineUserId: String(input.lineUserId || existing.lineUserId || ""),
     enabled: input.enabled ?? existing.enabled ?? true,
@@ -410,6 +414,10 @@ function normalizeReminderSettings(input = {}, existing = {}) {
     quietHoursEnabled: input.quietHoursEnabled ?? existing.quietHoursEnabled ?? false,
     quietStart: String(input.quietStart || existing.quietStart || "22:00").slice(0, 5),
     quietEnd: String(input.quietEnd || existing.quietEnd || "08:00").slice(0, 5),
+    defaultProject: String(input.defaultProject || existing.defaultProject || "Inbox").trim() || "Inbox",
+    defaultPriority,
+    defaultReminderTime,
+    smartProjectEnabled: input.smartProjectEnabled ?? existing.smartProjectEnabled ?? true,
     sent: input.sent && typeof input.sent === "object" ? input.sent : existing.sent || {},
     updatedAt: new Date().toISOString()
   };
@@ -896,26 +904,78 @@ async function findAssigneeByText(query) {
   });
 }
 
+function getTaskDefaultProject(settings) {
+  return String(settings?.defaultProject || "Inbox").trim() || "Inbox";
+}
+
+function inferProjectFromText(text, settings, tasks) {
+  const defaultProject = getTaskDefaultProject(settings);
+  if (settings?.smartProjectEnabled === false) return defaultProject;
+
+  const normalizedText = String(text || "").toLowerCase();
+  const projectNames = Array.from(
+    new Set([defaultProject, "Inbox", ...tasks.map((task) => task.project).filter(Boolean)])
+  )
+    .map((project) => String(project).trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  const directMatch = projectNames.find((project) => {
+    const normalizedProject = project.toLowerCase();
+    return normalizedProject.length >= 3 && normalizedText.includes(normalizedProject);
+  });
+  if (directMatch) return directMatch;
+
+  const keywordRules = [
+    { pattern: /line|ไลน์|liff|notification|แจ้งเตือน/i, keywords: ["line", "ไลน์", "liff"] },
+    { pattern: /โฆษณา|แคมเปญ|ads|marketing|facebook/i, keywords: ["โฆษณา", "แคมเปญ", "marketing", "ads"] }
+  ];
+  const keywordRule = keywordRules.find((rule) => rule.pattern.test(text || ""));
+  if (keywordRule) {
+    const keywordProject = projectNames.find((project) => {
+      const normalizedProject = project.toLowerCase();
+      return keywordRule.keywords.some((keyword) => normalizedProject.includes(keyword.toLowerCase()));
+    });
+    if (keywordProject) return keywordProject;
+  }
+
+  return defaultProject;
+}
+
+function inferPriorityFromText(text, settings) {
+  const normalizedText = String(text || "").toLowerCase();
+  if (/ด่วนมาก|เร่งด่วนมาก|asap|critical|ทันที/.test(normalizedText)) return "high";
+  if (/ด่วน|สำคัญ|urgent|important/.test(normalizedText)) return "high";
+  if (/ไม่ด่วน|ไม่เร่ง|low/.test(normalizedText)) return "low";
+  return settings?.defaultPriority || "medium";
+}
+
+function applyDefaultDueTime(parsed, settings) {
+  return parsed?.dueTime || settings?.defaultReminderTime || settings?.reminderTime || "09:00";
+}
+
 async function createTaskFromLineText(text, event, tasks) {
   const currentUser = await getLineUserFromEvent(event);
+  const settings = await getReminderSettingsForUser(currentUser);
   const assigneePhrase = parseAssigneePhrase(text);
   const assigneeUser = await findAssigneeByText(assigneePhrase.assigneeQuery);
   const parsed = parseDueDateFromText(assigneePhrase.cleanedText);
   const title = parsed.cleanedText || text.trim();
+  const project = inferProjectFromText(assigneePhrase.cleanedText, settings, tasks);
   const task = normalizeTask(
     {
       id: `task-${Date.now()}`,
       title,
       description: "สร้างจากข้อความ LINE",
-      project: "Inbox",
+      project,
       status: "todo",
-      priority: /ด่วน|urgent|สำคัญ/.test(text) ? "high" : "medium",
+      priority: inferPriorityFromText(text, settings),
       assignee: assigneeUser?.displayName || currentUser.displayName || getRequesterName(event),
       assigneeUserId: assigneeUser?.id || currentUser.id,
       createdByUserId: currentUser.id,
       createdByLineUserId: currentUser.lineUserId,
       dueDate: parsed.dueDate,
-      dueTime: parsed.dueTime,
+      dueTime: applyDefaultDueTime(parsed, settings),
       tags: ["LINE"],
       activity: [{ id: `activity-${Date.now()}`, text: "สร้างจากข้อความ LINE แบบอัตโนมัติ", time: "ตอนนี้" }]
     },
@@ -2315,25 +2375,27 @@ async function handleLineWebhookEvent(event) {
     const assigneePhrase = parseAssigneePhrase(text.replace("เพิ่มงาน ", "").replace(/^add /i, "").trim());
     const assigneeUser = await findAssigneeByText(assigneePhrase.assigneeQuery);
     const parsed = parseDueDateFromText(assigneePhrase.cleanedText);
+    const settings = await getReminderSettingsForUser(currentUser);
     const title = parsed.cleanedText;
     if (!title) {
       await replyLine(event.replyToken, "พิมพ์แบบนี้ได้เลย: เพิ่มงาน โทรหาลูกค้า");
       return;
     }
+    const project = inferProjectFromText(assigneePhrase.cleanedText, settings, tasks);
     const task = normalizeTask(
       {
         id: `task-${Date.now()}`,
         title,
         description: "สร้างจากข้อความ LINE",
-        project: "Inbox",
+        project,
         status: "todo",
-        priority: "medium",
-      assignee: assigneeUser?.displayName || currentUser.displayName || getRequesterName(event),
-      assigneeUserId: assigneeUser?.id || currentUser.id,
+        priority: inferPriorityFromText(text, settings),
+        assignee: assigneeUser?.displayName || currentUser.displayName || getRequesterName(event),
+        assigneeUserId: assigneeUser?.id || currentUser.id,
         createdByUserId: currentUser.id,
         createdByLineUserId: currentUser.lineUserId,
         dueDate: parsed.dueDate,
-        dueTime: parsed.dueTime,
+        dueTime: applyDefaultDueTime(parsed, settings),
         tags: ["LINE"],
         activity: [{ id: `activity-${Date.now()}`, text: "สร้างจาก LINE webhook", time: "ตอนนี้" }]
       },
@@ -2350,7 +2412,7 @@ async function handleLineWebhookEvent(event) {
     return;
   }
 
-  await replyLine(event.replyToken, "ใช้คำสั่งได้: สรุป, งานวันนี้, งานค้าง, งานของฉัน, ดูงาน ชื่องาน, เพิ่มงาน ชื่องาน พรุ่งนี้, กำลังทำ ชื่องาน, รอตรวจ ชื่องาน, เลื่อนงาน ชื่องาน พรุ่งนี้, เสร็จ ชื่องาน");
+  await replyLine(event.replyToken, "พิมพ์จดงานได้เลย เช่น ประชุมพรุ่งนี้ 10 โมง, ส่งรายงานวันที่ 31, เตือนกินยา 20:00 หรือใช้คำสั่ง: สรุป, งานวันนี้, งานค้าง, เพิ่มงาน ชื่องาน พรุ่งนี้, กำลังทำ ชื่องาน, เสร็จ ชื่องาน");
 }
 
 async function handleLineApi(request, response) {

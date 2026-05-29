@@ -979,7 +979,11 @@ async function loadReminderSettings() {
       reminderTime: "09:00",
       quietHoursEnabled: false,
       quietStart: "22:00",
-      quietEnd: "08:00"
+      quietEnd: "08:00",
+      defaultProject: "Inbox",
+      defaultPriority: "medium",
+      defaultReminderTime: "09:00",
+      smartProjectEnabled: true
     };
   }
 }
@@ -2072,28 +2076,45 @@ function renderCreateTaskPage(seedTask = createMobileTask()) {
 
 async function renderPersonalSettings() {
   document.body.dataset.view = "settings";
-  mobileElements.sectionTitle.textContent = "แจ้งเตือน LINE";
-  mobileElements.sectionSubtitle.textContent = "ตั้งเวลาให้ BossBoard เตือนงานส่วนตัวของคุณ";
+  mobileElements.sectionTitle.textContent = "ตั้งค่า";
+  mobileElements.sectionSubtitle.textContent = "ควบคุมว่า LINE จะช่วยจดและเตือนงานให้คุณยังไง";
   await loadReminderSettings();
   const settings = reminderSettings || {};
   const openTasks = mobileTasks.filter((task) => task.status !== "done").length;
   const dueSoonTasks = mobileTasks.filter((task) => task.status !== "done" && isDueSoon(task)).length;
   const overdueTasks = mobileTasks.filter((task) => task.status !== "done" && isOverdue(task)).length;
-  const connectedName = teamState.user?.displayName || "ยังไม่ทราบชื่อ";
-  const rawLineIdentity = teamState.user?.lineUserId || currentLineUserId || "";
-  const lineIdentity = rawLineIdentity ? `${rawLineIdentity.slice(0, 6)}...${rawLineIdentity.slice(-4)}` : "เปิดผ่าน LINE เพื่อระบุตัวตน";
+  const currentUser = teamState.user || {};
+  const connectedName = currentUser.displayName || "ยังไม่ทราบชื่อ";
+  const avatar = currentUser.avatarUrl || currentUser.pictureUrl || "";
+  const isLineConnected = Boolean(currentUser.lineUserId || currentLineUserId);
+  const defaultProject = settings.defaultProject || "Inbox";
+  const projectOptions = ["Inbox", ...getProjectNames(defaultProject).filter((name) => name !== "Inbox")];
+  const priorityOptions = Object.entries(mobilePriorityMeta).map(([value, meta]) => ({ value, label: meta.label }));
+  const doneTasks = mobileTasks.filter((task) => task.status === "done").length;
 
   mobileElements.taskList.innerHTML = `
-    <div class="settings-screen">
-      <article class="settings-hero">
-        <div class="settings-hero-icon">LINE</div>
-        <div>
-          <span class="settings-kicker">บัญชีที่เชื่อมอยู่</span>
-          <h2>${escapeMobileHtml(connectedName)}</h2>
-          <p>${escapeMobileHtml(lineIdentity)}</p>
+    <div class="settings-screen settings-control-center">
+      <div class="settings-page-title">
+        <span>BossBoard settings</span>
+        <h2>ตั้งค่า</h2>
+        <p>ทำให้บอทจำงานผ่าน LINE ได้ง่ายขึ้น และเตือนคุณในเวลาที่เหมาะที่สุด</p>
+      </div>
+
+      <section class="settings-profile-card">
+        <div class="settings-profile-avatar">
+          ${avatar ? `<img src="${escapeMobileHtml(avatar)}" alt="" />` : `<span>${escapeMobileHtml(getInitials(connectedName))}</span>`}
         </div>
-        <span class="settings-status ${settings.enabled ? "is-on" : ""}">${settings.enabled ? "เปิดเตือน" : "ปิดเตือน"}</span>
-      </article>
+        <div class="settings-profile-main">
+          <span class="settings-kicker">โปรไฟล์และ LINE</span>
+          <h2>${escapeMobileHtml(connectedName)}</h2>
+          <p>${isLineConnected ? "เชื่อม LINE แล้ว ข้อมูลของคุณแยกจากผู้ใช้อื่น" : "ยังไม่ได้เชื่อม LINE เปิดผ่าน LIFF เพื่อใช้งานเต็มรูปแบบ"}</p>
+          <div class="settings-profile-actions">
+            <button id="openProfileSettingsButton" type="button">แก้โปรไฟล์</button>
+            <button id="sendTestReminderButton" type="button">ทดสอบส่งแจ้งเตือน</button>
+          </div>
+        </div>
+        <span class="settings-status ${settings.enabled && isLineConnected ? "is-on" : ""}">${isLineConnected ? "LINE พร้อม" : "รอเชื่อม"}</span>
+      </section>
 
       <section class="settings-summary-grid" aria-label="สรุปการแจ้งเตือน">
         <article>
@@ -2110,11 +2131,12 @@ async function renderPersonalSettings() {
         </article>
       </section>
 
-      <form id="reminderSettingsForm" class="settings-card settings-form">
+      <form id="reminderSettingsForm" class="settings-card settings-form settings-coach-card">
         <div class="settings-card-head">
           <div>
-            <span class="settings-kicker">LINE reminders</span>
+            <span class="settings-kicker">LINE Reminder Coach</span>
             <h2>รอบแจ้งเตือนของฉัน</h2>
+            <p>ตั้งให้ LINE สรุปงาน คอยกันลืม และพักการแจ้งในเวลาส่วนตัว</p>
           </div>
           <label class="app-switch" aria-label="เปิดใช้งานแจ้งเตือนทั้งหมด">
             <input id="reminderEnabledInput" type="checkbox" ${settings.enabled ? "checked" : ""} />
@@ -2130,7 +2152,7 @@ async function renderPersonalSettings() {
               <strong>สรุปรายวัน</strong>
               <small>ส่งภาพรวมงานที่ต้องทำทุกเช้า</small>
             </span>
-            <input class="settings-time-input" id="dailySummaryTimeInput" type="time" value="${escapeMobileHtml(settings.dailySummaryTime || "08:30")}" />
+            <input class="settings-time-input" id="dailySummaryTimeInput" type="time" value="${escapeMobileHtml(settings.dailySummaryTime || "08:30")}" aria-label="เวลาสรุปรายวัน" />
           </label>
           <label class="settings-row">
             <input id="dueSoonEnabledInput" type="checkbox" ${settings.dueSoonEnabled ? "checked" : ""} />
@@ -2140,9 +2162,9 @@ async function renderPersonalSettings() {
               <small>กันลืมงานที่กำลังจะถึงเวลา</small>
             </span>
             <div class="inline-setting">
-              <input id="dueSoonDaysInput" type="number" min="0" max="7" value="${escapeMobileHtml(settings.dueSoonDays ?? 1)}" />
+              <input id="dueSoonDaysInput" type="number" min="0" max="7" value="${escapeMobileHtml(settings.dueSoonDays ?? 1)}" aria-label="จำนวนวันก่อนครบกำหนด" />
               <small>วัน</small>
-              <input id="dueSoonTimeInput" type="time" value="${escapeMobileHtml(settings.dueSoonTime || "18:00")}" />
+              <input id="dueSoonTimeInput" type="time" value="${escapeMobileHtml(settings.dueSoonTime || "18:00")}" aria-label="เวลาเตือนก่อนครบกำหนด" />
             </div>
           </label>
           <label class="settings-row">
@@ -2152,7 +2174,7 @@ async function renderPersonalSettings() {
               <strong>เตือนงานเลยกำหนด</strong>
               <small>ส่งรายการที่ยังไม่ปิดงาน</small>
             </span>
-            <input class="settings-time-input" id="reminderTimeInput" type="time" value="${escapeMobileHtml(settings.reminderTime || "09:00")}" />
+            <input class="settings-time-input" id="reminderTimeInput" type="time" value="${escapeMobileHtml(settings.reminderTime || "09:00")}" aria-label="เวลาเตือนงานเลยกำหนด" />
           </label>
           <label class="settings-row">
             <input id="quietHoursEnabledInput" type="checkbox" ${settings.quietHoursEnabled ? "checked" : ""} />
@@ -2162,40 +2184,94 @@ async function renderPersonalSettings() {
               <small>พักการแจ้งเตือนในช่วงเวลาที่กำหนด</small>
             </span>
             <div class="inline-setting">
-              <input id="quietStartInput" type="time" value="${escapeMobileHtml(settings.quietStart || "22:00")}" />
+              <input id="quietStartInput" type="time" value="${escapeMobileHtml(settings.quietStart || "22:00")}" aria-label="เริ่มงดแจ้งเตือน" />
               <small>ถึง</small>
-              <input id="quietEndInput" type="time" value="${escapeMobileHtml(settings.quietEnd || "08:00")}" />
+              <input id="quietEndInput" type="time" value="${escapeMobileHtml(settings.quietEnd || "08:00")}" aria-label="จบงดแจ้งเตือน" />
             </div>
           </label>
         </div>
-        <button class="save-button" type="submit">บันทึกการแจ้งเตือน</button>
+
+        <section class="settings-subsection">
+          <div class="settings-card-head compact">
+            <div>
+              <span class="settings-kicker">ค่าเริ่มต้นเวลาอ่านจาก LINE</span>
+              <h3>ถ้าบอทอ่านไม่ครบ ให้ใช้ค่านี้</h3>
+            </div>
+          </div>
+          <div class="settings-default-grid">
+            <label>โปรเจกต์เริ่มต้น
+              <select id="defaultProjectInput">
+                ${projectOptions.map((name) => `<option value="${escapeMobileHtml(name)}" ${name === defaultProject ? "selected" : ""}>${escapeMobileHtml(name)}</option>`).join("")}
+              </select>
+            </label>
+            <label>ความสำคัญเริ่มต้น
+              <select id="defaultPriorityInput">
+                ${priorityOptions.map((item) => `<option value="${item.value}" ${item.value === (settings.defaultPriority || "medium") ? "selected" : ""}>${escapeMobileHtml(item.label)}</option>`).join("")}
+              </select>
+            </label>
+            <label>เวลาเตือนเริ่มต้น
+              <input id="defaultReminderTimeInput" type="time" value="${escapeMobileHtml(settings.defaultReminderTime || "09:00")}" />
+            </label>
+          </div>
+          <label class="settings-row settings-toggle-row">
+            <input id="smartProjectEnabledInput" type="checkbox" ${settings.smartProjectEnabled === false ? "" : "checked"} />
+            <span class="settings-row-icon">AI</span>
+            <span class="settings-row-main">
+              <strong>เดาโปรเจกต์จากข้อความ LINE</strong>
+              <small>ถ้าเดาไม่ได้ ระบบจะส่งเข้า Inbox ก่อน</small>
+            </span>
+          </label>
+        </section>
+
+        <button class="save-button" type="submit">บันทึกการตั้งค่า</button>
       </form>
 
-      <section class="settings-card settings-actions-card">
+      <section class="settings-card settings-howto-card">
         <div class="settings-card-head">
           <div>
-            <span class="settings-kicker">ทดสอบการทำงาน</span>
-            <h2>ส่งเข้าห้องแชท LINE</h2>
+            <span class="settings-kicker">วิธีจดงานผ่าน LINE</span>
+            <h2>พิมพ์ธรรมดาได้เลย</h2>
+            <p>BossBoard จะพยายามจับชื่องาน วัน เวลา และโปรเจกต์ให้เอง</p>
           </div>
         </div>
-        <button type="button" id="sendTestReminderButton" class="settings-action-row">
-          <span>ทดสอบข้อความแจ้งเตือน</span>
-          <strong>ส่งเลย</strong>
+        <div class="settings-example-list">
+          <button type="button" data-example-text="ประชุมพรุ่งนี้ 10 โมง">ประชุมพรุ่งนี้ 10 โมง</button>
+          <button type="button" data-example-text="ส่งรายงานวันที่ 31">ส่งรายงานวันที่ 31</button>
+          <button type="button" data-example-text="เตือนกินยา 20:00">เตือนกินยา 20:00</button>
+        </div>
+        <p class="settings-hint">ถ้าข้อความไม่บอกโปรเจกต์ ระบบจะลง Inbox และใช้เวลาเตือนเริ่มต้นที่ตั้งไว้</p>
+      </section>
+
+      <section class="settings-card settings-menu-card">
+        <button type="button" id="openProjectsSettingsButton" class="settings-action-row">
+          <span>โปรเจกต์ / Inbox</span>
+          <strong>จัดการ ›</strong>
         </button>
         <button type="button" id="pushSummaryButton" class="settings-action-row">
-          <span>สรุปงานค้างตอนนี้</span>
+          <span>ส่งสรุปงานค้างเข้า LINE ตอนนี้</span>
           <strong>ส่งสรุป</strong>
+        </button>
+        <button type="button" id="exportDataButton" class="settings-action-row">
+          <span>ส่งออกข้อมูลของฉัน</span>
+          <strong>JSON</strong>
+        </button>
+        <button type="button" id="clearDoneTasksButton" class="settings-action-row">
+          <span>ล้างงานที่เสร็จแล้ว</span>
+          <strong>${doneTasks} งาน</strong>
         </button>
       </section>
 
       <article class="settings-note-card">
-        <strong>ความเป็นส่วนตัว</strong>
-        <p>ระบบจะแจ้งเฉพาะงานของบัญชี LINE นี้ และแยกข้อมูลของแต่ละคนไว้คนละชุดก่อนขยายเป็นทีมในอนาคต</p>
+        <strong>ข้อมูลและความเป็นส่วนตัว</strong>
+        <p>ข้อมูลแยกตาม LINE ของแต่ละคน ไม่แสดง LINE User ID ยาว ๆ ในหน้าผู้ใช้ และตอนนี้ BossBoard จะใช้เป็นแอปเตือนงานส่วนตัวก่อน</p>
       </article>
+
+      <button id="deleteAllDataButton" class="settings-danger-button" type="button">ลบงานทั้งหมดของฉัน</button>
     </div>
   `;
 
   document.querySelector("#reminderSettingsForm")?.addEventListener("submit", saveReminderSettingsFromForm);
+  document.querySelector("#openProfileSettingsButton")?.addEventListener("click", renderMyProfile);
   document.querySelector("#sendTestReminderButton")?.addEventListener("click", async () => {
     try {
       await sendTestReminder();
@@ -2205,22 +2281,40 @@ async function renderPersonalSettings() {
     }
   });
   document.querySelector("#pushSummaryButton")?.addEventListener("click", pushSummaryToLine);
+  document.querySelector("#openProjectsSettingsButton")?.addEventListener("click", () => {
+    selectedProjectName = "";
+    setActiveNav("projects");
+    renderProjectsPage();
+  });
+  document.querySelector("#exportDataButton")?.addEventListener("click", exportBossBoardData);
+  document.querySelector("#clearDoneTasksButton")?.addEventListener("click", clearCompletedTasksFromSettings);
+  document.querySelector("#deleteAllDataButton")?.addEventListener("click", deleteAllTasksFromSettings);
+  document.querySelectorAll("[data-example-text]").forEach((button) => {
+    button.addEventListener("click", () => {
+      navigator.clipboard?.writeText(button.dataset.exampleText || "");
+      showToast(`ตัวอย่าง: ${button.dataset.exampleText}`);
+    });
+  });
 }
 
 async function saveReminderSettingsFromForm(event) {
   event.preventDefault();
   const payload = {
-    enabled: document.querySelector("#reminderEnabledInput").checked,
-    dailySummaryEnabled: document.querySelector("#dailySummaryEnabledInput").checked,
-    dailySummaryTime: document.querySelector("#dailySummaryTimeInput").value || "08:30",
-    dueSoonEnabled: document.querySelector("#dueSoonEnabledInput").checked,
-    dueSoonDays: Number(document.querySelector("#dueSoonDaysInput").value || 1),
-    dueSoonTime: document.querySelector("#dueSoonTimeInput").value || "18:00",
-    overdueEnabled: document.querySelector("#overdueEnabledInput").checked,
-    reminderTime: document.querySelector("#reminderTimeInput").value || "09:00",
-    quietHoursEnabled: document.querySelector("#quietHoursEnabledInput").checked,
-    quietStart: document.querySelector("#quietStartInput").value || "22:00",
-    quietEnd: document.querySelector("#quietEndInput").value || "08:00"
+    enabled: document.querySelector("#reminderEnabledInput")?.checked ?? true,
+    dailySummaryEnabled: document.querySelector("#dailySummaryEnabledInput")?.checked ?? true,
+    dailySummaryTime: document.querySelector("#dailySummaryTimeInput")?.value || "08:30",
+    dueSoonEnabled: document.querySelector("#dueSoonEnabledInput")?.checked ?? true,
+    dueSoonDays: Number(document.querySelector("#dueSoonDaysInput")?.value || 1),
+    dueSoonTime: document.querySelector("#dueSoonTimeInput")?.value || "18:00",
+    overdueEnabled: document.querySelector("#overdueEnabledInput")?.checked ?? true,
+    reminderTime: document.querySelector("#reminderTimeInput")?.value || "09:00",
+    quietHoursEnabled: document.querySelector("#quietHoursEnabledInput")?.checked ?? false,
+    quietStart: document.querySelector("#quietStartInput")?.value || "22:00",
+    quietEnd: document.querySelector("#quietEndInput")?.value || "08:00",
+    defaultProject: document.querySelector("#defaultProjectInput")?.value || "Inbox",
+    defaultPriority: document.querySelector("#defaultPriorityInput")?.value || "medium",
+    defaultReminderTime: document.querySelector("#defaultReminderTimeInput")?.value || "09:00",
+    smartProjectEnabled: document.querySelector("#smartProjectEnabledInput")?.checked ?? true
   };
   try {
     await saveReminderSettings(payload);
@@ -2228,6 +2322,71 @@ async function saveReminderSettingsFromForm(event) {
     renderPersonalSettings();
   } catch {
     showToast("บันทึกการแจ้งเตือนไม่สำเร็จ");
+  }
+}
+
+function exportBossBoardData() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    lineDisplayName: teamState.user?.displayName || "",
+    tasks: mobileTasks,
+    projects: deriveProjectsFromTasks(),
+    reminderSettings: reminderSettings || {}
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `bossboard-export-${getBangkokDateKey()}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  showToast("ส่งออกข้อมูลแล้ว");
+}
+
+async function clearCompletedTasksFromSettings() {
+  const doneTasks = mobileTasks.filter((task) => task.status === "done");
+  if (!doneTasks.length) {
+    showToast("ยังไม่มีงานที่เสร็จแล้วให้ล้าง");
+    return;
+  }
+  const confirmed = await confirmAction({
+    title: "ล้างงานที่เสร็จแล้ว?",
+    message: `จะลบงานที่เสร็จแล้ว ${doneTasks.length} รายการออกจากบัญชีของคุณ`,
+    confirmText: "ล้างงาน",
+    danger: true
+  });
+  if (!confirmed) return;
+  try {
+    await Promise.all(doneTasks.map((task) => deleteTaskFromApi(task.id)));
+    mobileTasks = mobileTasks.filter((task) => task.status !== "done");
+    showToast("ล้างงานที่เสร็จแล้ว");
+    renderPersonalSettings();
+  } catch {
+    showToast("ล้างงานไม่สำเร็จ ลองใหม่อีกครั้ง");
+  }
+}
+
+async function deleteAllTasksFromSettings() {
+  if (!mobileTasks.length) {
+    showToast("ยังไม่มีงานให้ลบ");
+    return;
+  }
+  const confirmed = await confirmAction({
+    title: "ลบงานทั้งหมด?",
+    message: `จะลบงานทั้งหมด ${mobileTasks.length} รายการของบัญชี LINE นี้ โปรไฟล์และการตั้งค่า LINE จะยังอยู่`,
+    confirmText: "ลบทั้งหมด",
+    danger: true
+  });
+  if (!confirmed) return;
+  try {
+    await Promise.all(mobileTasks.map((task) => deleteTaskFromApi(task.id)));
+    mobileTasks = [];
+    showToast("ลบงานทั้งหมดแล้ว");
+    renderPersonalSettings();
+  } catch {
+    showToast("ลบงานทั้งหมดไม่สำเร็จ");
   }
 }
 
