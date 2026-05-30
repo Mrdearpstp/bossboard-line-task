@@ -884,6 +884,47 @@ function shouldCreateNaturalTask(text) {
   return true;
 }
 
+function hasThaiDateOrTimeCue(text) {
+  return /(วันนี้|พรุ่งนี้|มะรืน|เดือนหน้า|อาทิตย์นี้|สัปดาห์นี้|วันที่|สิ้นเดือน|ต้นเดือน|ภายใน|อีก\s*\d+\s*(วัน|สัปดาห์)|\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}|\d{1,2}[:.]\d{2}|\d{1,2}\s*(โมง|น\.)|เช้า|บ่าย|เย็น|ค่ำ|เที่ยง|today|tomorrow)/i.test(String(text || ""));
+}
+
+function getSmartLineTaskQuestion(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (
+    /(วันนี้|today)/i.test(normalized) &&
+    /(เหลือ|ต้องทำ|มีงาน|งานอะไร|อะไรบ้าง|ทำอะไร|ค้าง)/.test(normalized)
+  ) {
+    return "today-open";
+  }
+  if (
+    /(เหลือ|ค้าง|ยังไม่เสร็จ|ยังไม่ได้ทำ).*(งาน|อะไร)|งาน.*(ค้าง|ยังไม่เสร็จ|ยังไม่ได้ทำ)|open tasks/i.test(normalized)
+  ) {
+    return "open";
+  }
+  return "";
+}
+
+function cleanSmartRescheduleQuery(text) {
+  return String(text || "")
+    .replace(/^(ช่วย)?\s*(ขอ)?\s*(เลื่อน|ย้าย|เปลี่ยน)(งาน|นัด|กำหนด|วัน|เวลา)?/i, " ")
+    .replace(/\b(reschedule|move)\b/ig, " ")
+    .replace(/(ไปเป็น|ให้เป็น|ไป|เป็น|กำหนด|เดดไลน์|deadline)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getSmartLineRescheduleIntent(text) {
+  const normalized = String(text || "").trim();
+  if (!/(^|\s)(เลื่อน|ย้าย|เปลี่ยน|ขอเลื่อน|reschedule|move)(งาน|นัด|กำหนด|วัน|เวลา)?/i.test(normalized)) return null;
+  if (!hasThaiDateOrTimeCue(normalized)) {
+    return { missingSchedule: true, query: cleanSmartRescheduleQuery(normalized), parsed: null };
+  }
+  const parsed = parseDueDateFromText(normalized);
+  const query = cleanSmartRescheduleQuery(parsed.cleanedText);
+  return { missingSchedule: false, query, parsed };
+}
+
 function parseAssigneePhrase(text) {
   const match = text.match(/\s+ให้\s+(.+)$/);
   if (!match) return { cleanedText: text.trim(), assigneeQuery: "" };
@@ -2498,6 +2539,49 @@ async function handleLineWebhookEvent(event) {
     );
     await writeTasks([task, ...tasks]);
     await replyLineMessages(event.replyToken, [buildTaskFlex(task, "จดสำเร็จ")]);
+    return;
+  }
+
+  const smartQuestion = getSmartLineTaskQuestion(text);
+  if (smartQuestion === "today-open") {
+    const todayOpenTasks = openTasks
+      .filter((task) => task.dueDate === todayDate())
+      .sort((a, b) => `${a.dueTime || "23:59"}${a.title}`.localeCompare(`${b.dueTime || "23:59"}${b.title}`));
+    await replyLine(event.replyToken, buildTaskList("งานวันนี้ที่ยังเหลือ", todayOpenTasks));
+    return;
+  }
+
+  if (smartQuestion === "open") {
+    await replyLine(event.replyToken, buildTaskList("งานที่ยังเหลือ", openTasks.sort((a, b) => `${a.dueDate}${a.dueTime || ""}`.localeCompare(`${b.dueDate}${b.dueTime || ""}`))));
+    return;
+  }
+
+  const smartReschedule = getSmartLineRescheduleIntent(text);
+  if (smartReschedule) {
+    if (smartReschedule.missingSchedule) {
+      await replyLine(event.replyToken, "อยากเลื่อนไปวันไหนครับ ลองพิมพ์ เช่น เลื่อนประชุมไปพรุ่งนี้ 10 โมง หรือ เลื่อนส่งรายงานไปวันที่ 5 เดือนหน้า");
+      return;
+    }
+    if (!smartReschedule.query) {
+      await replyLine(event.replyToken, "ยังไม่รู้ว่าต้องเลื่อนงานไหน ลองพิมพ์ เช่น เลื่อนประชุมไปวันที่ 5 เดือนหน้า");
+      return;
+    }
+    const task = findTaskByQuery(openTasks, smartReschedule.query);
+    if (!task) {
+      await replyLine(event.replyToken, `ยังไม่เจองานที่ชื่อใกล้เคียงกับ "${smartReschedule.query}" ลองพิมพ์ ดูงาน ${smartReschedule.query} หรือแก้ชื่อให้ตรงขึ้นอีกนิด`);
+      return;
+    }
+    const updatedTask = {
+      ...task,
+      dueDate: smartReschedule.parsed.dueDate,
+      dueTime: smartReschedule.parsed.dueTime || task.dueTime || "",
+      activity: [
+        createActivityEntry(`เลื่อนกำหนดจากข้อความ LINE: ${text}`, currentUser, { type: "line-smart-reschedule" }),
+        ...task.activity
+      ]
+    };
+    await writeTasks(tasks.map((currentTask) => (currentTask.id === task.id ? updatedTask : currentTask)));
+    await replyLineMessages(event.replyToken, [buildTaskFlex(updatedTask, "เลื่อนกำหนดแล้ว", buildChangeSummary(task, updatedTask))]);
     return;
   }
 
