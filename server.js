@@ -1321,6 +1321,12 @@ function buildTaskFlex(task, heading = "จดสำเร็จ", changeSummary
   const progress = getFlexProgress(task);
   const dueText = formatTaskDueAt(task) || "ยังไม่ตั้งกำหนด";
   const projectName = task.project || "LINE";
+  const isDueNowCard = String(heading || "").includes("ถึงเวลา");
+  const heroIcon = isDueNowCard ? "⏰" : status.icon;
+  const heroColor = isDueNowCard ? "#FFE24A" : "#FF7A00";
+  const subtitle = isDueNowCard
+    ? "งานนี้ถึงเวลาที่ตั้งไว้แล้ว เลือกทำต่อ เลื่อนกำหนด หรือเปิดแอปเพื่อตรวจรายละเอียด"
+    : "ตรวจสอบรายละเอียดและเลือกทำต่อด้านล่าง";
 
   return {
     type: "flex",
@@ -1350,13 +1356,13 @@ function buildTaskFlex(task, heading = "จดสำเร็จ", changeSummary
                 width: "42px",
                 height: "42px",
                 cornerRadius: "14px",
-                backgroundColor: "#FF7A00",
+                backgroundColor: heroColor,
                 justifyContent: "center",
                 alignItems: "center",
                 contents: [
                   {
                     type: "text",
-                    text: status.icon,
+                    text: heroIcon,
                     size: "xl",
                     align: "center"
                   }
@@ -1369,7 +1375,7 @@ function buildTaskFlex(task, heading = "จดสำเร็จ", changeSummary
                 contents: [
                   {
                     type: "text",
-                    text: `${heading} ${status.icon}`,
+                    text: `${heading} ${heroIcon}`,
                     weight: "bold",
                     size: "xl",
                     color: "#1F1A17",
@@ -1377,7 +1383,7 @@ function buildTaskFlex(task, heading = "จดสำเร็จ", changeSummary
                   },
                   {
                     type: "text",
-                    text: "ตรวจสอบรายละเอียดและเลือกทำต่อด้านล่าง",
+                    text: subtitle,
                     margin: "xs",
                     size: "xs",
                     color: "#7A6A5E",
@@ -1578,6 +1584,33 @@ function getFlexProgress(task) {
   return task.priority === "high" ? 30 : 20;
 }
 
+async function createOneMinuteTestReminder(currentUser) {
+  const { dateKey, timeKey } = getBangkokParts(new Date(Date.now() + 60 * 1000));
+  const tasks = await readTasks();
+  const settings = await getReminderSettingsForUser(currentUser);
+  const task = normalizeTask(
+    {
+      id: `task-test-reminder-${Date.now()}`,
+      title: "ทดสอบแจ้งเตือนใน 1 นาที",
+      description: "งานทดสอบนี้สร้างจากหน้า Settings เพื่อเช็คว่าถึงเวลาแล้ว LINE แจ้งจริง",
+      project: settings.defaultProject || "Inbox",
+      status: "todo",
+      priority: "medium",
+      assignee: currentUser.displayName || "ฉัน",
+      assigneeUserId: currentUser.id,
+      createdByUserId: currentUser.id,
+      createdByLineUserId: currentUser.lineUserId,
+      dueDate: dateKey,
+      dueTime: timeKey,
+      tags: ["LINE", "Test"],
+      activity: [createActivityEntry("สร้างงานทดสอบแจ้งเตือนใน 1 นาที", currentUser)]
+    },
+    null
+  );
+  await writeTasks([task, ...tasks]);
+  return task;
+}
+
 function flexPill(text, backgroundColor, color) {
   return {
     type: "box",
@@ -1774,7 +1807,24 @@ async function sendTaskDueRemindersToUser(user, tasks, settings, dateKey, timeKe
   for (const task of dueNowTasks) {
     sent[getTaskReminderBucket(task)] = `${task.dueDate} ${task.dueTime}`;
   }
-  return saveReminderSettingsForUser(user, { ...settings, sent });
+  const nextSettings = await saveReminderSettingsForUser(user, { ...settings, sent });
+
+  const allTasks = await readTasks();
+  const dueNowIds = new Set(dueNowTasks.map((task) => task.id));
+  const nextTasks = allTasks.map((task) => {
+    if (!dueNowIds.has(task.id)) return task;
+    return {
+      ...task,
+      activity: [
+        createActivityEntry("ระบบส่งแจ้งเตือนผ่าน LINE แล้ว", user, {
+          changes: `ส่งแจ้งเตือนเวลา ${formatTaskDueAt(task)}`
+        }),
+        ...(Array.isArray(task.activity) ? task.activity : [])
+      ]
+    };
+  });
+  await writeTasks(nextTasks);
+  return nextSettings;
 }
 
 async function sendReminderToUser(user, tasks, title, bucket, dateKey) {
@@ -2531,6 +2581,21 @@ async function handleLineApi(request, response) {
       const visibleTasks = await getVisibleTasksForUser(currentUser);
       await pushLine(currentUser.lineUserId, buildReminderText(currentUser, visibleTasks, "ทดสอบแจ้งเตือนจาก BossBoard"));
       sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/line/test-due-reminder") {
+      const currentUser = await getCurrentUser(request);
+      if (!currentUser) {
+        sendJson(response, 401, { error: "LINE user is required" });
+        return;
+      }
+      if (!isPushableLineUserId(currentUser.lineUserId)) {
+        sendJson(response, 400, { error: "LINE user is not pushable. Open the app in LINE first." });
+        return;
+      }
+      const task = await createOneMinuteTestReminder(currentUser);
+      sendJson(response, 201, { ok: true, task });
       return;
     }
 

@@ -1007,6 +1007,16 @@ async function sendTestReminder() {
   if (!response.ok) throw new Error("Cannot send test reminder");
 }
 
+async function sendOneMinuteTestReminder() {
+  const response = await apiFetch("/api/line/test-due-reminder", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" }
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || "Cannot create timed test reminder");
+  return result.task;
+}
+
 function getBangkokDateKey(offsetDays = 0) {
   const date = new Date(Date.now() + offsetDays * 86400000);
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -2272,12 +2282,26 @@ async function renderPersonalSettings() {
 
   document.querySelector("#reminderSettingsForm")?.addEventListener("submit", saveReminderSettingsFromForm);
   document.querySelector("#openProfileSettingsButton")?.addEventListener("click", renderMyProfile);
+  document.querySelector("#sendTestReminderButton")?.insertAdjacentHTML(
+    "afterend",
+    `<button id="sendOneMinuteTestButton" type="button">ทดสอบเตือนใน 1 นาที</button>`
+  );
   document.querySelector("#sendTestReminderButton")?.addEventListener("click", async () => {
     try {
       await sendTestReminder();
       showToast("ส่งทดสอบเข้า LINE แล้ว");
     } catch {
       showToast("ส่งทดสอบไม่สำเร็จ ตรวจสอบว่าเพิ่ม OA เป็นเพื่อนแล้ว");
+    }
+  });
+  document.querySelector("#sendOneMinuteTestButton")?.addEventListener("click", async () => {
+    try {
+      const task = await sendOneMinuteTestReminder();
+      await loadMobileData();
+      renderPersonalSettings();
+      showToast(`สร้างงานทดสอบแล้ว รอ LINE แจ้งตอน ${task?.dueTime || "อีก 1 นาที"}`);
+    } catch (error) {
+      showToast(error.message || "สร้างงานทดสอบไม่สำเร็จ เปิดผ่าน LINE ก่อน");
     }
   });
   document.querySelector("#pushSummaryButton")?.addEventListener("click", pushSummaryToLine);
