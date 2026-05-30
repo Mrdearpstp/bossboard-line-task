@@ -123,9 +123,7 @@ document.querySelector("#mobileTaskDeleteButton")?.addEventListener("click", () 
   deleteTaskWithConfirmation(taskId);
 });
 mobileElements.lineLoginButton.addEventListener("click", () => {
-  if (window.liff && !window.liff.isLoggedIn()) {
-    window.liff.login();
-  }
+  loginWithLine();
 });
 
 document.querySelectorAll(".bottom-nav button").forEach((button) => {
@@ -891,8 +889,22 @@ async function deleteProjectWithConfirmation(projectName) {
 initializeApp();
 
 async function initializeApp() {
-  await initializeLine();
-  await loadMobileTasks();
+  const lineReady = await initializeLine();
+  if (lineReady || isLocalPreview()) {
+    await loadMobileTasks();
+  } else {
+    renderLineLoginRequired();
+  }
+}
+
+function isLocalPreview() {
+  return ["127.0.0.1", "localhost"].includes(window.location.hostname);
+}
+
+function loginWithLine() {
+  if (!window.liff) return;
+  const redirectUri = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+  window.liff.login({ redirectUri });
 }
 
 async function initializeLine() {
@@ -902,29 +914,32 @@ async function initializeLine() {
 
     if (!config.isLiffConfigured) {
       setLineStatus("ยังไม่ตั้งค่า LIFF", "ใส่ LINE_LIFF_ID ในไฟล์ .env แล้ว restart server");
-      return;
+      return false;
     }
 
     if (!window.liff) {
       setLineStatus("โหลด LIFF SDK ไม่ได้", "ตรวจสอบ internet หรือเปิดผ่าน LINE อีกครั้ง");
-      return;
+      return false;
     }
 
-    await window.liff.init({ liffId: config.liffId });
+    await window.liff.init({ liffId: config.liffId, withLoginOnExternalBrowser: true });
     if (!window.liff.isLoggedIn()) {
-      setLineStatus("ยังไม่ได้เข้า LINE", "กดปุ่มเพื่อ login ผ่าน LINE");
+      setLineStatus("ยังไม่ได้เข้า LINE", "กำลังพาไป login ผ่าน LINE เพื่อแยกข้อมูลงานของคุณ");
       mobileElements.lineLoginButton.classList.remove("hidden");
-      return;
+      loginWithLine();
+      return false;
     }
 
     const profile = await window.liff.getProfile();
     currentLineUserId = profile.userId;
     currentLineIdToken = window.liff.getIDToken ? window.liff.getIDToken() || "" : "";
     if (!currentLineIdToken) {
-      setLineStatus("ยืนยัน LINE ไม่สำเร็จ", "กรุณาเปิดผ่าน LINE อีกครั้ง");
-      return;
+      currentLineUserId = "";
+      setLineStatus("ยืนยัน LINE ไม่สำเร็จ", "กรุณาเปิดผ่าน LINE และตรวจว่า Scope มี openid/profile");
+      mobileElements.lineLoginButton.classList.remove("hidden");
+      return false;
     }
-    await fetch("/api/line/profile", {
+    const profileResponse = await fetch("/api/line/profile", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -932,13 +947,20 @@ async function initializeLine() {
       },
       body: JSON.stringify(profile)
     });
+    if (!profileResponse.ok) throw new Error("Cannot verify LINE profile");
     setLineStatus("เชื่อม LINE แล้ว", `สวัสดี ${profile.displayName}`);
     mobileElements.lineLoginButton.classList.add("hidden");
-  } catch {
-    setLineStatus("LINE ยังไม่พร้อม", "หน้านี้ยังใช้แบบเว็บได้ และจะเชื่อม LINE เมื่อ config ครบ");
+    await loadTeamState();
+    handleInviteFromQuery();
+    return true;
+  } catch (error) {
+    console.error(error);
+    currentLineUserId = "";
+    currentLineIdToken = "";
+    setLineStatus("ยืนยัน LINE ไม่สำเร็จ", "เปิดแอปผ่าน LINE อีกครั้ง หรือกดเข้า LINE เพื่อยืนยันตัวตน");
+    mobileElements.lineLoginButton.classList.remove("hidden");
+    return false;
   }
-  await loadTeamState();
-  handleInviteFromQuery();
 }
 
 function setLineStatus(title, text) {
@@ -1040,15 +1062,22 @@ function isDueSoon(task) {
 }
 
 async function loadMobileTasks() {
-  const allowLocalPreview = ["127.0.0.1", "localhost"].includes(window.location.hostname);
-  if (!currentLineUserId && !allowLocalPreview) {
+  const allowLocalPreview = isLocalPreview();
+  if (!currentLineIdToken && !allowLocalPreview) {
     mobileTasks = [];
-    renderMobile();
+    renderLineLoginRequired();
     showToast("กรุณาเปิดผ่าน LINE และเข้าสู่ระบบก่อนดูงาน");
     return;
   }
   try {
     const response = await apiFetch("/api/tasks");
+    if (response.status === 401) {
+      currentLineUserId = "";
+      currentLineIdToken = "";
+      renderLineLoginRequired();
+      showToast("ต้องยืนยัน LINE ก่อนโหลดข้อมูลงาน");
+      return;
+    }
     if (!response.ok) throw new Error("Cannot load tasks");
     mobileTasks = await response.json();
     await loadProjects();
@@ -1060,6 +1089,24 @@ async function loadMobileTasks() {
   renderMobile();
   openTaskFromQuery();
   handleInviteFromQuery();
+}
+
+function renderLineLoginRequired() {
+  document.body.dataset.view = "line-login-required";
+  mobileElements.filterText.textContent = "LINE login required";
+  mobileElements.sectionTitle.textContent = "เข้าใช้ผ่าน LINE";
+  mobileElements.sectionSubtitle.textContent = "BossBoard ต้องรู้ว่าเป็น LINE ของใครก่อน ถึงจะแยกงานให้ถูกคน";
+  mobileElements.lineLoginButton.classList.remove("hidden");
+  mobileElements.taskList.innerHTML = `
+    <section class="login-required-card">
+      <div class="login-required-icon">LINE</div>
+      <h2>กรุณายืนยัน LINE ก่อนใช้งาน</h2>
+      <p>เปิดจาก LINE MINI App หรือกดปุ่มด้านล่างเพื่อ login ผ่าน LINE แล้วระบบจะสร้างพื้นที่งานส่วนตัวให้ทันที</p>
+      <button type="button" data-login-line>เข้า LINE</button>
+      <small>ถ้าเพิ่งเพิ่มเพื่อน OA ให้เปิดจากลิงก์ MINI App อีกครั้งหลังเพิ่มเพื่อนแล้ว</small>
+    </section>
+  `;
+  mobileElements.taskList.querySelector("[data-login-line]")?.addEventListener("click", loginWithLine);
 }
 
 async function loadProjects() {
