@@ -903,7 +903,7 @@ function isLocalPreview() {
 
 function loginWithLine() {
   if (!window.liff) return;
-  const redirectUri = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+  const redirectUri = `${window.location.origin}${window.location.pathname}`;
   window.liff.login({ redirectUri });
 }
 
