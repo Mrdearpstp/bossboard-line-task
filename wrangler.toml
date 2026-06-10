@@ -1,0 +1,6 @@
+name = "bossboard-line-task"
+compatibility_date = "2026-06-10"
+pages_build_output_dir = "dist"
+
+[vars]
+RENDER_ORIGIN = "https://bossboard-line-task.onrender.com"

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Customer Support - BossBoard</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #fff8ef;
+        --surface: #ffffff;
+        --text: #1f1710;
+        --muted: #665b50;
+        --line: #ead7c1;
+        --orange: #ff8200;
+        --green: #06c755;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 10% 0%, rgba(255, 130, 0, 0.14), transparent 22rem),
+          radial-gradient(circle at 94% 8%, rgba(6, 199, 85, 0.12), transparent 18rem),
+          var(--bg);
+        color: var(--text);
+        font-family: "Be Vietnam Pro", "Noto Sans Thai", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.7;
+      }
+
+      main {
+        width: min(100% - 32px, 820px);
+        margin: 0 auto;
+        padding: 36px 0 56px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow: 0 18px 48px rgba(108, 66, 20, 0.12);
+        padding: clamp(22px, 4vw, 40px);
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+        font-weight: 900;
+      }
+
+      .mark {
+        display: grid;
+        width: 44px;
+        height: 44px;
+        place-items: center;
+        border-radius: 14px;
+        background: var(--orange);
+        color: white;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(28px, 7vw, 44px);
+        line-height: 1.15;
+      }
+
+      h2 {
+        margin: 34px 0 10px;
+        font-size: 22px;
+        line-height: 1.3;
+      }
+
+      p,
+      li {
+        color: var(--muted);
+        font-size: 16px;
+      }
+
+      ul {
+        padding-left: 22px;
+      }
+
+      a {
+        color: #d45e00;
+        font-weight: 800;
+      }
+
+      .updated {
+        margin: 8px 0 0;
+        color: #8c7d6f;
+        font-size: 14px;
+      }
+
+      .support-box {
+        display: grid;
+        gap: 12px;
+        margin: 24px 0;
+        border-radius: 18px;
+        background: #fff2df;
+        padding: 18px;
+      }
+
+      .support-item {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: baseline;
+      }
+
+      .label {
+        min-width: 120px;
+        color: var(--text);
+        font-weight: 900;
+      }
+
+      .notice {
+        margin-top: 24px;
+        border-radius: 18px;
+        background: #f1fff3;
+        padding: 16px 18px;
+        color: #1f5e32;
+        font-weight: 700;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        background: var(--green);
+        color: #fff;
+        padding: 4px 10px;
+        font-size: 13px;
+        font-weight: 900;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <article class="card">
+        <div class="brand">
+          <span class="mark">BB</span>
+          <span>BossBoard</span>
+        </div>
+        <h1>ศูนย์ช่วยเหลือ BossBoard</h1>
+        <p class="updated">อัปเดตล่าสุด: 29 พฤษภาคม 2026</p>
+
+        <p>
+          หน้านี้เป็นช่องทางติดต่อและข้อมูลช่วยเหลือสำหรับผู้ใช้ BossBoard แอปจดงานและแจ้งเตือนผ่าน LINE
+          หากพบปัญหาในการใช้งาน สามารถติดต่อผู้ดูแลได้ตามข้อมูลด้านล่าง
+        </p>
+
+        <section class="support-box" aria-label="Contact support">
+          <div class="support-item">
+            <span class="label">Email</span>
+            <a href="mailto:pisittipong.krakrueng@gmail.com">pisittipong.krakrueng@gmail.com</a>
+          </div>
+          <div class="support-item">
+            <span class="label">Service</span>
+            <span>BossBoard <span class="pill">LINE MINI App</span></span>
+          </div>
+          <div class="support-item">
+            <span class="label">Response time</span>
+            <span>โดยทั่วไปภายใน 1-3 วันทำการ</span>
+          </div>
+        </section>
+
+        <h2>วิธีเริ่มใช้งาน</h2>
+        <ul>
+          <li>เพิ่มเพื่อน LINE Official Account ของ BossBoard</li>
+          <li>เปิดแอปผ่าน LINE MINI App หรือปุ่มเปิดแอปในแชท</li>
+          <li>อนุญาตให้แอปเข้าถึงโปรไฟล์ LINE เพื่อแยกข้อมูลงานของคุณ</li>
+          <li>พิมพ์งานในแชท เช่น “ประชุมพรุ่งนี้ 10 โมง” หรือ “ส่งรายงานวันที่ 31”</li>
+        </ul>
+
+        <h2>ปัญหาที่พบบ่อย</h2>
+        <ul>
+          <li><strong>เปิดแอปแล้วขึ้น 404:</strong> ตรวจสอบว่าใช้ Published LIFF URL หรือแอปผ่านการ publish แล้ว</li>
+          <li><strong>บอทไม่ตอบ:</strong> ตรวจสอบว่า Messaging API webhook เปิดใช้งาน และ Webhook URL ถูกต้อง</li>
+          <li><strong>ไม่ได้รับแจ้งเตือน:</strong> ตรวจสอบการตั้งค่าแจ้งเตือนในหน้า LINE ของแอป และตรวจสอบว่าเพิ่มเพื่อน OA แล้ว</li>
+          <li><strong>ข้อมูลไม่ตรงผู้ใช้:</strong> เปิดแอปผ่าน LINE และกดยืนยัน/เชื่อม LINE อีกครั้ง</li>
+        </ul>
+
+        <h2>ลิงก์สำคัญ</h2>
+        <ul>
+          <li><a href="./privacy.html">นโยบายความเป็นส่วนตัว</a></li>
+          <li><a href="./terms.html">ข้อกำหนดการใช้งาน</a></li>
+          <li><a href="./line.html">เปิด BossBoard</a></li>
+        </ul>
+
+        <p class="notice">
+          URL สำหรับใช้ใน LINE Developers:
+          <br />
+          https://bossboard-line-task.onrender.com/support.html
+        </p>
+      </article>
+    </main>
+  </body>
+</html>

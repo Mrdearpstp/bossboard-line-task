@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node server.js",
     "build": "node --check server.js",
+    "build:cloudflare": "node scripts/build-cloudflare.js",
     "start": "node server.js",
     "lint": "node --check server.js"
   },
