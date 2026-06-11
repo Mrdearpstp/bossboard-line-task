@@ -35,12 +35,32 @@ Only after these pass should the LINE MINI App endpoint be changed to the Cloudf
 
 ## Phase 2: Move API/Webhook to Workers or Pages Functions
 
-Next step after Phase 1 is stable.
+Status: Phase 2A prepared.
 
+Cloudflare-native endpoints:
+
+- `GET /api/line/config`
+- `POST /api/line/profile`
+- `GET /api/team/me`
+- `GET /api/team/assignees`
+- `GET /api/team/me/kpi`
+
+These endpoints verify the LINE ID token at Cloudflare and keep each user's profile and KPI isolated by LINE user ID. Other APIs still use the Render fallback during the staged migration.
+
+Cloudflare Pages environment variables:
+
+- `RENDER_ORIGIN=https://bossboard-line-task.onrender.com`
+- `LINE_LIFF_ID=2010109340-Oj89MY4l`
+- `LINE_LOGIN_CHANNEL_ID=2010109340`
+- `SUPABASE_URL` from the existing Supabase project
+- `SUPABASE_SERVICE_ROLE_KEY` as a secret, never exposed to the browser
+
+Next Phase 2B work:
+
+- Port task and project APIs
+- Port reminder settings and test notification APIs
 - Port `/api/line/webhook`
-- Port `/api/line/config`
-- Port task/project APIs
-- Keep Supabase as the database temporarily
+- Remove the Render fallback after parity testing
 
 ## Phase 3: Move data from Supabase to D1
 
