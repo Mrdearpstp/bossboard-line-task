@@ -35,7 +35,7 @@ Only after these pass should the LINE MINI App endpoint be changed to the Cloudf
 
 ## Phase 2: Move API/Webhook to Workers or Pages Functions
 
-Status: Phase 2A prepared.
+Status: Phase 2B prepared.
 
 Cloudflare-native endpoints:
 
@@ -44,8 +44,19 @@ Cloudflare-native endpoints:
 - `GET /api/team/me`
 - `GET /api/team/assignees`
 - `GET /api/team/me/kpi`
+- `GET /api/tasks`
+- `GET /api/tasks/:id`
+- `POST /api/tasks`
+- `DELETE /api/tasks/:id`
+- `GET /api/projects`
+- `GET /api/projects/:id`
+- `POST /api/projects`
+- `PUT /api/projects/:id`
+- `DELETE /api/projects/:id`
 
 These endpoints verify the LINE ID token at Cloudflare and keep each user's profile and KPI isolated by LINE user ID. Other APIs still use the Render fallback during the staged migration.
+
+Task `PUT` and `PATCH` requests intentionally still use Render so the existing LINE Flex update notification remains active while notification delivery is ported.
 
 Cloudflare Pages environment variables:
 
@@ -55,9 +66,9 @@ Cloudflare Pages environment variables:
 - `SUPABASE_URL` from the existing Supabase project
 - `SUPABASE_SERVICE_ROLE_KEY` as a secret, never exposed to the browser
 
-Next Phase 2B work:
+Next Phase 2C work:
 
-- Port task and project APIs
+- Port task update APIs and LINE Flex update notifications
 - Port reminder settings and test notification APIs
 - Port `/api/line/webhook`
 - Remove the Render fallback after parity testing

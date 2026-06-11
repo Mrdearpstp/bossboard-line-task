@@ -53,7 +53,11 @@ async function handleCloudflareApi(context, url) {
     "/api/team/assignees",
     "/api/team/me/kpi"
   ]);
-  if (request.method !== "GET" || !nativeTeamPaths.has(url.pathname)) return null;
+  const isNativeTeamRequest = request.method === "GET" && nativeTeamPaths.has(url.pathname);
+  const isNativeTaskRequest = (url.pathname === "/api/tasks" || url.pathname.startsWith("/api/tasks/"))
+    && ["GET", "POST", "DELETE"].includes(request.method);
+  const isNativeProjectRequest = url.pathname === "/api/projects" || url.pathname.startsWith("/api/projects/");
+  if (!isNativeTeamRequest && !isNativeTaskRequest && !isNativeProjectRequest) return null;
 
   const currentUser = await getCurrentUser(request, context.env);
   if (!currentUser) {
@@ -71,8 +75,125 @@ async function handleCloudflareApi(context, url) {
     return nativeJson(await getAssignees(context.env, currentUser));
   }
 
-  const tasks = await readState(context.env, "tasks", []);
-  return nativeJson(calculateUserKpi(currentUser, getVisibleTasksForUser(currentUser, tasks, await readTeamState(context.env))));
+  if (url.pathname === "/api/team/me/kpi") {
+    const tasks = await readState(context.env, "tasks", []);
+    return nativeJson(calculateUserKpi(currentUser, getVisibleTasksForUser(currentUser, tasks, await readTeamState(context.env))));
+  }
+
+  if (url.pathname === "/api/tasks" || url.pathname.startsWith("/api/tasks/")) {
+    return handleNativeTasks(context, url, currentUser);
+  }
+
+  if (url.pathname === "/api/projects" || url.pathname.startsWith("/api/projects/")) {
+    return handleNativeProjects(context, url, currentUser);
+  }
+
+  return null;
+}
+
+async function handleNativeTasks(context, url, currentUser) {
+  const { request, env } = context;
+  const id = decodeResourceId(url.pathname, "/api/tasks");
+
+  // Updates still use Render so existing LINE Flex notifications keep working.
+  if (["PUT", "PATCH"].includes(request.method)) return null;
+
+  const [tasks, teamState] = await Promise.all([
+    readState(env, "tasks", []),
+    readTeamState(env)
+  ]);
+  const visibleTasks = getVisibleTasksForUser(currentUser, tasks, teamState);
+
+  if (request.method === "GET") {
+    if (!id) return nativeJson(visibleTasks);
+    const task = visibleTasks.find((item) => item.id === id);
+    return task ? nativeJson(task) : jsonError("Task not found", 404);
+  }
+
+  if (request.method === "POST" && !id) {
+    const input = await request.json().catch(() => ({}));
+    const assigneeUser = getAllowedAssignee(input.assigneeUserId, currentUser, teamState);
+    const task = normalizeTask(
+      {
+        ...input,
+        id: input.id || createId("task"),
+        assignee: assigneeUser.displayName || currentUser.displayName || "Unassigned",
+        assigneeUserId: assigneeUser.id,
+        createdByUserId: currentUser.id,
+        createdByLineUserId: currentUser.lineUserId,
+        activity: [
+          createActivityEntry("Created task", currentUser),
+          ...(Array.isArray(input.activity) ? input.activity : [])
+        ]
+      },
+      null
+    );
+    await writeState(env, "tasks", [task, ...tasks]);
+    return nativeJson(task, 201);
+  }
+
+  if (request.method === "DELETE" && id) {
+    const existingTask = tasks.find((task) => task.id === id);
+    if (!existingTask) return jsonError("Task not found", 404);
+    if (!visibleTasks.some((task) => task.id === id)) {
+      return jsonError("You do not have access to this task", 403);
+    }
+    await writeState(env, "tasks", tasks.filter((task) => task.id !== id));
+    return nativeJson({ ok: true });
+  }
+
+  return jsonError("Method not allowed", 405);
+}
+
+async function handleNativeProjects(context, url, currentUser) {
+  const { request, env } = context;
+  const id = decodeResourceId(url.pathname, "/api/projects");
+  const [projects, tasks, teamState] = await Promise.all([
+    readState(env, "projects", []),
+    readState(env, "tasks", []),
+    readTeamState(env)
+  ]);
+
+  if (request.method === "GET" && !id) {
+    const visibleTasks = getVisibleTasksForUser(currentUser, tasks, teamState);
+    return nativeJson(getProjectsForUser(currentUser, projects, visibleTasks));
+  }
+
+  if (request.method === "POST" && !id) {
+    const input = await request.json().catch(() => ({}));
+    const normalizedName = String(input.name || "").trim().toLowerCase();
+    const existingProject = projects.find(
+      (project) => canAccessProject(project, currentUser)
+        && String(project.name || "").trim().toLowerCase() === normalizedName
+    );
+    if (existingProject) return nativeJson(existingProject);
+
+    const project = normalizeProject(input, null, currentUser);
+    await writeState(env, "projects", [project, ...projects]);
+    return nativeJson(project, 201);
+  }
+
+  const existingProject = projects.find((project) => project.id === id);
+  if (!existingProject) return jsonError("Project not found", 404);
+  if (!canAccessProject(existingProject, currentUser)) {
+    return jsonError("You do not have access to this project", 403);
+  }
+
+  if (request.method === "GET") return nativeJson(existingProject);
+
+  if (request.method === "PUT") {
+    const input = await request.json().catch(() => ({}));
+    const project = normalizeProject({ ...existingProject, ...input, id }, existingProject, currentUser);
+    await writeState(env, "projects", projects.map((item) => (item.id === id ? project : item)));
+    return nativeJson(project);
+  }
+
+  if (request.method === "DELETE") {
+    await writeState(env, "projects", projects.filter((project) => project.id !== id));
+    return nativeJson({ ok: true, deletedProjectId: id });
+  }
+
+  return jsonError("Method not allowed", 405);
 }
 
 async function getVerifiedLineProfile(request, env) {
@@ -203,6 +324,130 @@ function getVisibleTasksForUser(user, tasks, teamState) {
       && !task.assigneeUserId
       && identityKeys.includes(String(task.assignee || "").trim().toLowerCase());
   });
+}
+
+function getAllowedAssignee(requestedUserId, currentUser, teamState) {
+  if (!requestedUserId || requestedUserId === currentUser.id) return currentUser;
+  const currentOrganizationIds = teamState.members
+    .filter((member) => member.userId === currentUser.id && member.status === "active")
+    .map((member) => member.organizationId);
+  const canAssign = teamState.members.some(
+    (member) => member.userId === requestedUserId
+      && member.status === "active"
+      && currentOrganizationIds.includes(member.organizationId)
+  );
+  return canAssign
+    ? teamState.users.find((user) => user.id === requestedUserId) || currentUser
+    : currentUser;
+}
+
+function normalizeTask(input, existingTask) {
+  return {
+    id: String(input.id || existingTask?.id || createId("task")),
+    title: String(input.title || existingTask?.title || "Untitled task").trim(),
+    description: String(input.description ?? existingTask?.description ?? "").trim(),
+    project: String(input.project || existingTask?.project || "General").trim(),
+    status: ["todo", "progress", "review", "done"].includes(input.status)
+      ? input.status
+      : existingTask?.status || "todo",
+    priority: ["high", "medium", "low"].includes(input.priority)
+      ? input.priority
+      : existingTask?.priority || "medium",
+    assignee: String(input.assignee || existingTask?.assignee || "Unassigned").trim(),
+    assigneeUserId: String(input.assigneeUserId || existingTask?.assigneeUserId || "").trim(),
+    organizationId: String(input.organizationId || existingTask?.organizationId || "").trim(),
+    createdByUserId: String(input.createdByUserId || existingTask?.createdByUserId || "").trim(),
+    createdByLineUserId: String(input.createdByLineUserId || existingTask?.createdByLineUserId || "").trim(),
+    dueDate: String(input.dueDate || existingTask?.dueDate || addDays(1)),
+    dueTime: normalizeDueTime(input.dueTime ?? existingTask?.dueTime ?? ""),
+    tags: Array.isArray(input.tags)
+      ? input.tags.map(String).map((tag) => tag.trim()).filter(Boolean)
+      : existingTask?.tags || [],
+    activity: Array.isArray(input.activity) ? input.activity : existingTask?.activity || []
+  };
+}
+
+function normalizeProject(input, existingProject, user) {
+  return {
+    id: String(input.id || existingProject?.id || createId("project")),
+    name: String(input.name || existingProject?.name || "New project").trim(),
+    description: String(input.description ?? existingProject?.description ?? "").trim(),
+    color: String(input.color || existingProject?.color || "#ff8a00").trim(),
+    icon: String(input.icon || existingProject?.icon || "folder").trim(),
+    priority: String(input.priority || existingProject?.priority || "normal").trim(),
+    startDate: String(input.startDate || existingProject?.startDate || "").trim(),
+    endDate: String(input.endDate || existingProject?.endDate || "").trim(),
+    members: (Array.isArray(input.members) ? input.members : existingProject?.members || [])
+      .map((member) => ({
+        id: String(member.id || "").trim(),
+        name: String(member.name || "").trim(),
+        avatarUrl: String(member.avatarUrl || member.pictureUrl || "").trim()
+      }))
+      .filter((member) => member.id || member.name || member.avatarUrl),
+    ownerUserId: String(input.ownerUserId || existingProject?.ownerUserId || user.id).trim(),
+    ownerLineUserId: String(input.ownerLineUserId || existingProject?.ownerLineUserId || user.lineUserId).trim(),
+    createdAt: existingProject?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function canAccessProject(project, user) {
+  return Boolean(
+    project
+      && user
+      && (
+        (project.ownerUserId && project.ownerUserId === user.id)
+        || (project.ownerLineUserId && project.ownerLineUserId === user.lineUserId)
+      )
+  );
+}
+
+function getProjectsForUser(user, projects, visibleTasks) {
+  const projectMap = new Map();
+  projects
+    .filter((project) => canAccessProject(project, user))
+    .forEach((project) => projectMap.set(project.name, { ...project, total: 0, done: 0, nextDue: "" }));
+
+  visibleTasks.forEach((task) => {
+    const name = task.project || "General";
+    const current = projectMap.get(name)
+      || normalizeProject({ name, description: "Created from existing tasks" }, null, user);
+    current.total = (current.total || 0) + 1;
+    current.done = (current.done || 0) + (task.status === "done" ? 1 : 0);
+    if (task.dueDate && (!current.nextDue || task.dueDate < current.nextDue)) current.nextDue = task.dueDate;
+    projectMap.set(name, current);
+  });
+
+  return Array.from(projectMap.values()).sort((a, b) => a.name.localeCompare(b.name, "th"));
+}
+
+function createActivityEntry(text, user) {
+  return {
+    id: createId("activity"),
+    text,
+    time: "Now",
+    createdAt: new Date().toISOString(),
+    actorName: user?.displayName || "",
+    actorUserId: user?.id || ""
+  };
+}
+
+function normalizeDueTime(value) {
+  const match = String(value || "").trim().match(/^(\d{1,2})(?::?(\d{2}))?$/);
+  if (!match) return "";
+  const hour = Number(match[1]);
+  const minute = Number(match[2] || 0);
+  if (hour > 23 || minute > 59) return "";
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function addDays(days) {
+  const date = new Date(Date.now() + days * 86400000);
+  return date.toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
+}
+
+function decodeResourceId(pathname, basePath) {
+  return decodeURIComponent(pathname.slice(basePath.length).replace(/^\/+/, ""));
 }
 
 function calculateUserKpi(user, tasks) {
