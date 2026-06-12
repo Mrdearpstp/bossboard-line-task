@@ -5,9 +5,11 @@ const PROXY_TIMEOUT_MS = 12000;
 export async function onRequest(context) {
   const url = new URL(context.request.url);
   if (context.request.method === "GET" && url.pathname === "/api/line/config") {
+    const appOrigin = url.origin;
     return Response.json(
       {
         liffId: context.env.LINE_LIFF_ID || DEFAULT_LIFF_ID,
+        loginRedirectUri: `${appOrigin}/line`,
         isLiffConfigured: true,
         isMessagingConfigured: Boolean(context.env.LINE_CHANNEL_ACCESS_TOKEN),
         hasPushTarget: false,

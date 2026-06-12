@@ -59,7 +59,7 @@ function main() {
       "  Referrer-Policy: strict-origin-when-cross-origin",
       "",
       "/static/*",
-      "  Cache-Control: public, max-age=31536000, immutable",
+      "  Cache-Control: public, max-age=0, must-revalidate",
       ""
     ].join("\n"),
     "utf8"

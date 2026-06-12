@@ -56,6 +56,10 @@ let mobileTasks = [];
 let activeFilter = "all";
 let currentLineUserId = "";
 let currentLineIdToken = "";
+let currentLiffId = "";
+let currentLineLoginRedirectUri = "";
+let isLiffInitialized = false;
+let isLineLoginPending = false;
 let assigneeOptions = [];
 let teamState = {
   user: null,
@@ -901,16 +905,60 @@ function isLocalPreview() {
   return ["127.0.0.1", "localhost"].includes(window.location.hostname);
 }
 
-function loginWithLine() {
-  if (!window.liff) return;
-  const redirectUri = `${window.location.origin}${window.location.pathname}`;
-  window.liff.login({ redirectUri });
+async function loginWithLine() {
+  if (isLineLoginPending) return;
+  isLineLoginPending = true;
+  mobileElements.lineLoginButton.disabled = true;
+
+  try {
+    if (!window.liff) throw new Error("LIFF SDK is unavailable");
+
+    if (!isLiffInitialized) {
+      const response = await fetch("/api/line/config", { cache: "no-store" });
+      if (!response.ok) throw new Error("Cannot load LIFF configuration");
+      const config = await response.json();
+      currentLiffId = config.liffId || "";
+      currentLineLoginRedirectUri = config.loginRedirectUri || getLineLoginRedirectUri();
+      if (!currentLiffId) throw new Error("LIFF ID is missing");
+      await window.liff.init({
+        liffId: currentLiffId,
+        withLoginOnExternalBrowser: false
+      });
+      isLiffInitialized = true;
+    }
+
+    if (window.liff.isLoggedIn()) {
+      window.location.replace(currentLineLoginRedirectUri || getLineLoginRedirectUri());
+      return;
+    }
+
+    window.liff.login({
+      redirectUri: currentLineLoginRedirectUri || getLineLoginRedirectUri()
+    });
+  } catch (error) {
+    console.error("LINE login failed", error);
+    const reason = error?.code || error?.message || "unknown error";
+    setLineStatus(
+      "เข้า LINE ไม่สำเร็จ",
+      `ตรวจ Endpoint URL ของ MINI App ให้เป็น ${getLineLoginRedirectUri()} (${reason})`
+    );
+    mobileElements.lineLoginButton.classList.remove("hidden");
+    mobileElements.lineLoginButton.disabled = false;
+    isLineLoginPending = false;
+  }
+}
+
+function getLineLoginRedirectUri() {
+  const path = window.location.pathname === "/line.html" ? "/line.html" : "/line";
+  return `${window.location.origin}${path}`;
 }
 
 async function initializeLine() {
   try {
-    const response = await fetch("/api/line/config");
+    const response = await fetch("/api/line/config", { cache: "no-store" });
     const config = await response.json();
+    currentLiffId = config.liffId || "";
+    currentLineLoginRedirectUri = config.loginRedirectUri || getLineLoginRedirectUri();
 
     if (!config.isLiffConfigured) {
       setLineStatus("ยังไม่ตั้งค่า LIFF", "ใส่ LINE_LIFF_ID ในไฟล์ .env แล้ว restart server");
@@ -922,11 +970,14 @@ async function initializeLine() {
       return false;
     }
 
-    await window.liff.init({ liffId: config.liffId, withLoginOnExternalBrowser: true });
+    await window.liff.init({
+      liffId: currentLiffId,
+      withLoginOnExternalBrowser: false
+    });
+    isLiffInitialized = true;
     if (!window.liff.isLoggedIn()) {
-      setLineStatus("ยังไม่ได้เข้า LINE", "กำลังพาไป login ผ่าน LINE เพื่อแยกข้อมูลงานของคุณ");
+      setLineStatus("ยังไม่ได้เข้า LINE", "กดเข้า LINE เพื่อยืนยันตัวตนและเปิดพื้นที่งานส่วนตัว");
       mobileElements.lineLoginButton.classList.remove("hidden");
-      loginWithLine();
       return false;
     }
 
@@ -947,7 +998,12 @@ async function initializeLine() {
       },
       body: JSON.stringify(profile)
     });
-    if (!profileResponse.ok) throw new Error("Cannot verify LINE profile");
+    if (!profileResponse.ok) {
+      const result = await profileResponse.json().catch(() => ({}));
+      throw new Error(result.error || `Cannot verify LINE profile (${profileResponse.status})`);
+    }
+    isLineLoginPending = false;
+    mobileElements.lineLoginButton.disabled = false;
     setLineStatus("เชื่อม LINE แล้ว", `สวัสดี ${profile.displayName}`);
     mobileElements.lineLoginButton.classList.add("hidden");
     await loadTeamState();
