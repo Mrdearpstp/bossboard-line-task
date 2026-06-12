@@ -493,8 +493,34 @@ async function getVerifiedLineProfileFromRequest(request) {
   if (isLocalHttpRequest(request)) return null;
   const idToken = request.headers["x-line-id-token"] || "";
   const verified = await verifyLineIdToken(idToken);
-  if (!verified?.sub) return null;
-  return verified;
+  if (verified?.sub) return verified;
+
+  const authorization = request.headers.authorization || "";
+  const accessToken = authorization.toLowerCase().startsWith("bearer ")
+    ? authorization.slice(7).trim()
+    : "";
+  if (!accessToken) return null;
+
+  const clientId = getLineClientId();
+  const verifyResponse = await fetch(
+    `https://api.line.me/oauth2/v2.1/verify?access_token=${encodeURIComponent(accessToken)}`
+  );
+  if (!verifyResponse.ok) return null;
+  const accessTokenInfo = await verifyResponse.json();
+  if (String(accessTokenInfo.client_id || "") !== clientId) return null;
+
+  const profileResponse = await fetch("https://api.line.me/v2/profile", {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!profileResponse.ok) return null;
+  const profile = await profileResponse.json();
+  return profile?.userId
+    ? {
+        sub: profile.userId,
+        name: profile.displayName || "",
+        picture: profile.pictureUrl || ""
+      }
+    : null;
 }
 
 function verifyLineSignature(rawBody, signature) {

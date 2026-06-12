@@ -56,6 +56,7 @@ let mobileTasks = [];
 let activeFilter = "all";
 let currentLineUserId = "";
 let currentLineIdToken = "";
+let currentLineAccessToken = "";
 let currentLiffId = "";
 let currentLineLoginRedirectUri = "";
 let isLiffInitialized = false;
@@ -984,9 +985,10 @@ async function initializeLine() {
     const profile = await window.liff.getProfile();
     currentLineUserId = profile.userId;
     currentLineIdToken = window.liff.getIDToken ? window.liff.getIDToken() || "" : "";
-    if (!currentLineIdToken) {
+    currentLineAccessToken = window.liff.getAccessToken ? window.liff.getAccessToken() || "" : "";
+    if (!currentLineIdToken && !currentLineAccessToken) {
       currentLineUserId = "";
-      setLineStatus("ยืนยัน LINE ไม่สำเร็จ", "กรุณาเปิดผ่าน LINE และตรวจว่า Scope มี openid/profile");
+      setLineStatus("ยืนยัน LINE ไม่สำเร็จ", "LINE ไม่ได้ส่ง token กลับมา กรุณาปิดหน้าต่างนี้แล้วเปิด MINI App ใหม่");
       mobileElements.lineLoginButton.classList.remove("hidden");
       return false;
     }
@@ -994,7 +996,8 @@ async function initializeLine() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-line-id-token": currentLineIdToken
+        ...(currentLineIdToken ? { "x-line-id-token": currentLineIdToken } : {}),
+        ...(currentLineAccessToken ? { Authorization: `Bearer ${currentLineAccessToken}` } : {})
       },
       body: JSON.stringify(profile)
     });
@@ -1013,7 +1016,9 @@ async function initializeLine() {
     console.error(error);
     currentLineUserId = "";
     currentLineIdToken = "";
-    setLineStatus("ยืนยัน LINE ไม่สำเร็จ", "เปิดแอปผ่าน LINE อีกครั้ง หรือกดเข้า LINE เพื่อยืนยันตัวตน");
+    currentLineAccessToken = "";
+    const reason = error?.code || error?.message || "unknown error";
+    setLineStatus("ยืนยัน LINE ไม่สำเร็จ", `ตรวจ LINE callback ไม่สำเร็จ (${reason})`);
     mobileElements.lineLoginButton.classList.remove("hidden");
     return false;
   }
@@ -1119,7 +1124,7 @@ function isDueSoon(task) {
 
 async function loadMobileTasks() {
   const allowLocalPreview = isLocalPreview();
-  if (!currentLineIdToken && !allowLocalPreview) {
+  if (!hasLineAuthToken() && !allowLocalPreview) {
     mobileTasks = [];
     renderLineLoginRequired();
     showToast("กรุณาเปิดผ่าน LINE และเข้าสู่ระบบก่อนดูงาน");
@@ -1130,6 +1135,7 @@ async function loadMobileTasks() {
     if (response.status === 401) {
       currentLineUserId = "";
       currentLineIdToken = "";
+      currentLineAccessToken = "";
       renderLineLoginRequired();
       showToast("ต้องยืนยัน LINE ก่อนโหลดข้อมูลงาน");
       return;
@@ -1186,9 +1192,14 @@ async function apiFetch(url, options = {}) {
   const headers = {
     ...(options.headers || {}),
     ...(currentLineUserId ? { "x-line-user-id": currentLineUserId } : {}),
-    ...(currentLineIdToken ? { "x-line-id-token": currentLineIdToken } : {})
+    ...(currentLineIdToken ? { "x-line-id-token": currentLineIdToken } : {}),
+    ...(currentLineAccessToken ? { Authorization: `Bearer ${currentLineAccessToken}` } : {})
   };
   return fetch(url, { ...options, headers });
+}
+
+function hasLineAuthToken() {
+  return Boolean(currentLineIdToken || currentLineAccessToken);
 }
 
 async function loadTeamState() {

@@ -36,7 +36,7 @@ async function handleCloudflareApi(context, url) {
   if (request.method === "POST" && url.pathname === "/api/line/profile") {
     const verifiedProfile = await getVerifiedLineProfile(request, context.env);
     if (!verifiedProfile) {
-      return jsonError("LINE ID token is required", 401);
+      return jsonError("A valid LINE login token is required", 401);
     }
 
     const input = await request.json().catch(() => ({}));
@@ -200,21 +200,50 @@ async function handleNativeProjects(context, url, currentUser) {
 
 async function getVerifiedLineProfile(request, env) {
   const idToken = request.headers.get("x-line-id-token") || "";
+  const accessToken = getBearerToken(request);
   const clientId = String(env.LINE_LOGIN_CHANNEL_ID || (env.LINE_LIFF_ID || DEFAULT_LIFF_ID).split("-")[0] || "");
-  if (!idToken || !clientId) return null;
+  if (!clientId) return null;
 
-  const response = await fetch("https://api.line.me/oauth2/v2.1/verify", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      id_token: idToken,
-      client_id: clientId
-    })
+  if (idToken) {
+    const response = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        id_token: idToken,
+        client_id: clientId
+      })
+    });
+    if (response.ok) {
+      const profile = await response.json();
+      if (profile?.sub) return profile;
+    }
+  }
+
+  if (!accessToken) return null;
+  const verifyResponse = await fetch(
+    `https://api.line.me/oauth2/v2.1/verify?access_token=${encodeURIComponent(accessToken)}`
+  );
+  if (!verifyResponse.ok) return null;
+  const accessTokenInfo = await verifyResponse.json();
+  if (String(accessTokenInfo.client_id || "") !== clientId) return null;
+
+  const profileResponse = await fetch("https://api.line.me/v2/profile", {
+    headers: { Authorization: `Bearer ${accessToken}` }
   });
-  if (!response.ok) return null;
+  if (!profileResponse.ok) return null;
+  const profile = await profileResponse.json();
+  return profile?.userId
+    ? {
+        sub: profile.userId,
+        name: profile.displayName || "",
+        picture: profile.pictureUrl || ""
+      }
+    : null;
+}
 
-  const profile = await response.json();
-  return profile?.sub ? profile : null;
+function getBearerToken(request) {
+  const authorization = request.headers.get("authorization") || "";
+  return authorization.toLowerCase().startsWith("bearer ") ? authorization.slice(7).trim() : "";
 }
 
 async function getCurrentUser(request, env) {
