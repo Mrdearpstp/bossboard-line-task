@@ -30,6 +30,20 @@ export async function onRequest(context) {
 }
 
 async function handleCloudflareApi(context, url) {
+  if (url.pathname === "/api/line/webhook") {
+    if (context.request.method === "GET") {
+      return nativeJson({
+        ok: true,
+        service: "BossBoard LINE webhook",
+        runtime: "cloudflare-pages"
+      });
+    }
+    if (context.request.method === "POST") {
+      return handleNativeLineWebhook(context);
+    }
+    return jsonError("Method not allowed", 405);
+  }
+
   if (!isSupabaseConfigured(context.env)) return null;
 
   const { request } = context;
@@ -91,6 +105,467 @@ async function handleCloudflareApi(context, url) {
   }
 
   return null;
+}
+
+async function handleNativeLineWebhook(context) {
+  const { request, env } = context;
+  if (!env.LINE_CHANNEL_SECRET || !env.LINE_CHANNEL_ACCESS_TOKEN) {
+    return jsonError("LINE messaging is not configured", 503);
+  }
+  if (!isSupabaseConfigured(env)) {
+    return jsonError("Database is not configured", 503);
+  }
+
+  const signature = request.headers.get("x-line-signature") || "";
+  const rawBody = await request.arrayBuffer();
+  if (!signature || !(await verifyLineWebhookSignature(rawBody, signature, env.LINE_CHANNEL_SECRET))) {
+    console.warn(JSON.stringify({ event: "line_webhook_rejected", reason: "invalid_signature" }));
+    return jsonError("Invalid LINE signature", 401);
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(rawBody));
+  } catch {
+    return jsonError("Invalid JSON body", 400);
+  }
+
+  const events = Array.isArray(payload.events) ? payload.events : [];
+  const work = Promise.allSettled(events.map((event) => processLineWebhookEvent(event, env)));
+  if (typeof context.waitUntil === "function") {
+    context.waitUntil(work);
+  } else {
+    await work;
+  }
+
+  return nativeJson({ ok: true, accepted: events.length });
+}
+
+async function verifyLineWebhookSignature(rawBody, signature, channelSecret) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(channelSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, rawBody));
+  const expected = bytesToBase64(digest);
+  return constantTimeEqual(expected, signature);
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function constantTimeEqual(left, right) {
+  const leftBytes = new TextEncoder().encode(String(left || ""));
+  const rightBytes = new TextEncoder().encode(String(right || ""));
+  if (leftBytes.length !== rightBytes.length) return false;
+  let difference = 0;
+  for (let index = 0; index < leftBytes.length; index += 1) {
+    difference |= leftBytes[index] ^ rightBytes[index];
+  }
+  return difference === 0;
+}
+
+async function processLineWebhookEvent(event, env) {
+  if (event?.type !== "message" || event?.message?.type !== "text") return;
+  const lineUserId = String(event?.source?.userId || "").trim();
+  const replyToken = String(event?.replyToken || "").trim();
+  const text = String(event?.message?.text || "").trim();
+  if (!lineUserId || !replyToken || !text) return;
+
+  try {
+    const currentUser = await getOrCreateWebhookUser(env, lineUserId);
+    const [tasks, teamState] = await Promise.all([
+      readState(env, "tasks", []),
+      readTeamState(env)
+    ]);
+    const visibleTasks = getVisibleTasksForUser(currentUser, tasks, teamState);
+    const result = await applyLineTextCommand(env, text, currentUser, tasks, visibleTasks);
+    await replyLineMessage(env, replyToken, result.messages);
+    console.log(JSON.stringify({
+      event: "line_webhook_processed",
+      command: result.command,
+      lineUserId: maskIdentifier(lineUserId)
+    }));
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "line_webhook_failed",
+      lineUserId: maskIdentifier(lineUserId),
+      message: error?.message || "Unknown webhook error"
+    }));
+    await replyLineMessage(env, replyToken, [{
+      type: "text",
+      text: "ขออภัย ระบบบันทึกงานไม่สำเร็จ ลองส่งข้อความอีกครั้งนะ"
+    }]).catch(() => {});
+  }
+}
+
+async function getOrCreateWebhookUser(env, lineUserId) {
+  const users = await readState(env, "users", []);
+  const existingUser = users.find((user) => user.lineUserId === lineUserId);
+  const lineProfile = await fetchLineMessagingProfile(env, lineUserId);
+  const now = new Date().toISOString();
+  const user = {
+    ...(existingUser || {}),
+    id: existingUser?.id || createId("user"),
+    lineUserId,
+    displayName: lineProfile?.displayName || existingUser?.displayName || "LINE user",
+    pictureUrl: lineProfile?.pictureUrl || existingUser?.pictureUrl || "",
+    email: existingUser?.email || "",
+    createdAt: existingUser?.createdAt || now,
+    updatedAt: now
+  };
+  const nextUsers = existingUser
+    ? users.map((item) => (item.id === existingUser.id ? user : item))
+    : [user, ...users];
+  await writeState(env, "users", nextUsers);
+  await saveLineProfile(env, {
+    userId: lineUserId,
+    displayName: user.displayName,
+    pictureUrl: user.pictureUrl,
+    updatedAt: now
+  });
+  return user;
+}
+
+async function fetchLineMessagingProfile(env, lineUserId) {
+  const response = await fetch(`https://api.line.me/v2/bot/profile/${encodeURIComponent(lineUserId)}`, {
+    headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` }
+  });
+  if (!response.ok) return null;
+  return response.json();
+}
+
+async function applyLineTextCommand(env, rawText, currentUser, tasks, visibleTasks) {
+  const text = rawText.replace(/\s+/g, " ").trim();
+  const normalized = text.toLowerCase();
+
+  if (/^(สรุป|summary|งานทั้งหมด)$/.test(normalized)) {
+    return {
+      command: "summary",
+      messages: [{ type: "text", text: buildTaskSummaryText(visibleTasks) }]
+    };
+  }
+
+  if (/^(งานวันนี้|วันนี้|today)$/.test(normalized) || /วันนี้.*เหลือ.*งาน/.test(normalized)) {
+    const today = bangkokDateString(new Date());
+    const todayTasks = visibleTasks.filter((task) => task.status !== "done" && task.dueDate === today);
+    return {
+      command: "today",
+      messages: [{ type: "text", text: buildTaskListText("งานวันนี้", todayTasks) }]
+    };
+  }
+
+  if (/^(งานค้าง|ค้าง|open|ดูงาน|งานของฉัน)$/.test(normalized)) {
+    return {
+      command: "open_tasks",
+      messages: [{
+        type: "text",
+        text: buildTaskListText("งานที่ยังไม่เสร็จ", visibleTasks.filter((task) => task.status !== "done"))
+      }]
+    };
+  }
+
+  const statusCommand = parseStatusCommand(text);
+  if (statusCommand) {
+    const matchedTask = findTaskByTitle(visibleTasks, statusCommand.query);
+    if (!matchedTask) {
+      return {
+        command: "status_not_found",
+        messages: [{ type: "text", text: `ยังหางาน “${statusCommand.query}” ไม่เจอ ลองพิมพ์ชื่อให้ใกล้เคียงขึ้นนะ` }]
+      };
+    }
+    const updatedTask = normalizeTask({
+      ...matchedTask,
+      status: statusCommand.status,
+      activity: [
+        ...(matchedTask.activity || []),
+        createActivityEntry(statusCommand.activityText, currentUser)
+      ]
+    }, matchedTask);
+    await writeState(env, "tasks", tasks.map((task) => (task.id === matchedTask.id ? updatedTask : task)));
+    return {
+      command: `status_${statusCommand.status}`,
+      messages: [{
+        type: "text",
+        text: `${statusCommand.replyLabel} “${updatedTask.title}” แล้ว`
+      }]
+    };
+  }
+
+  const parsed = parseNaturalTask(text);
+  const task = normalizeTask({
+    id: createId("task"),
+    title: parsed.title,
+    description: "สร้างจากข้อความ LINE",
+    project: "Inbox",
+    status: "todo",
+    priority: parsed.priority,
+    assignee: currentUser.displayName,
+    assigneeUserId: currentUser.id,
+    createdByUserId: currentUser.id,
+    createdByLineUserId: currentUser.lineUserId,
+    dueDate: parsed.dueDate,
+    dueTime: parsed.dueTime,
+    tags: ["LINE"],
+    activity: [createActivityEntry("สร้างงานจากข้อความ LINE", currentUser)]
+  }, null);
+  await writeState(env, "tasks", [task, ...tasks]);
+
+  const dueLabel = formatThaiTaskDue(task);
+  return {
+    command: "create_task",
+    messages: [{
+      type: "text",
+      text: `จดให้แล้ว\n${task.title}\nกำหนด: ${dueLabel}\nโปรเจกต์: Inbox`
+    }]
+  };
+}
+
+function parseStatusCommand(text) {
+  const commands = [
+    { pattern: /^(?:เสร็จ|ทำเสร็จ|ปิดงาน)\s+(.+)$/i, status: "done", replyLabel: "ปิดงาน", activityText: "เปลี่ยนสถานะเป็นเสร็จแล้วผ่าน LINE" },
+    { pattern: /^(?:กำลังทำ|เริ่มทำ|ทำต่อ)\s+(.+)$/i, status: "progress", replyLabel: "เปลี่ยนเป็นกำลังทำ", activityText: "เปลี่ยนสถานะเป็นกำลังทำผ่าน LINE" },
+    { pattern: /^(?:รอตรวจ|ส่งตรวจ)\s+(.+)$/i, status: "review", replyLabel: "ส่งงานเข้ารอตรวจ", activityText: "เปลี่ยนสถานะเป็นรอตรวจผ่าน LINE" }
+  ];
+  for (const command of commands) {
+    const match = text.match(command.pattern);
+    if (match) return { ...command, query: match[1].trim() };
+  }
+  return null;
+}
+
+function findTaskByTitle(tasks, query) {
+  const needle = normalizeSearchText(query);
+  if (!needle) return null;
+  const openTasks = tasks.filter((task) => task.status !== "done");
+  return openTasks.find((task) => normalizeSearchText(task.title) === needle)
+    || openTasks.find((task) => normalizeSearchText(task.title).includes(needle))
+    || openTasks.find((task) => needle.includes(normalizeSearchText(task.title)))
+    || null;
+}
+
+function normalizeSearchText(value) {
+  return String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function parseNaturalTask(text, now = new Date()) {
+  const dueDate = parseThaiDueDate(text, now);
+  const dueTime = parseThaiDueTime(text);
+  const title = stripThaiSchedulePhrases(text) || text.trim() || "งานใหม่";
+  return {
+    title,
+    dueDate,
+    dueTime,
+    priority: /(ด่วนมาก|สำคัญมาก|เร่งด่วน)/.test(text)
+      ? "high"
+      : /(ไม่ด่วน|ไว้ก่อน)/.test(text) ? "low" : "medium"
+  };
+}
+
+function parseThaiDueDate(text, now = new Date()) {
+  const base = bangkokDateParts(now);
+  if (/มะรืน/.test(text)) return datePartsToString(addCalendarDays(base, 2));
+  if (/พรุ่งนี้/.test(text)) return datePartsToString(addCalendarDays(base, 1));
+  if (/วันนี้/.test(text)) return datePartsToString(base);
+
+  const nextMonthMatch = text.match(/วันที่?\s*(\d{1,2})\s*เดือนหน้า/);
+  if (nextMonthMatch) {
+    return safeDateString(base.year, base.month + 1, Number(nextMonthMatch[1]));
+  }
+
+  const monthNames = {
+    "ม.ค.": 1, "มกรา": 1, "มกราคม": 1,
+    "ก.พ.": 2, "กุมภา": 2, "กุมภาพันธ์": 2,
+    "มี.ค.": 3, "มีนา": 3, "มีนาคม": 3,
+    "เม.ย.": 4, "เมษา": 4, "เมษายน": 4,
+    "พ.ค.": 5, "พฤษภา": 5, "พฤษภาคม": 5,
+    "มิ.ย.": 6, "มิถุนา": 6, "มิถุนายน": 6,
+    "ก.ค.": 7, "กรกฎา": 7, "กรกฎาคม": 7,
+    "ส.ค.": 8, "สิงหา": 8, "สิงหาคม": 8,
+    "ก.ย.": 9, "กันยา": 9, "กันยายน": 9,
+    "ต.ค.": 10, "ตุลา": 10, "ตุลาคม": 10,
+    "พ.ย.": 11, "พฤศจิกา": 11, "พฤศจิกายน": 11,
+    "ธ.ค.": 12, "ธันวา": 12, "ธันวาคม": 12
+  };
+  const monthPattern = Object.keys(monthNames)
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp)
+    .join("|");
+  const explicitMatch = text.match(new RegExp(`วันที่?\\s*(\\d{1,2})\\s*(${monthPattern})(?:\\s*(\\d{2,4}))?`));
+  if (explicitMatch) {
+    let year = explicitMatch[3] ? Number(explicitMatch[3]) : base.year;
+    if (year > 2400) year -= 543;
+    if (year < 100) year += 2000;
+    return safeDateString(year, monthNames[explicitMatch[2]], Number(explicitMatch[1]));
+  }
+
+  const dayOnlyMatch = text.match(/วันที่?\s*(\d{1,2})(?!\s*(?:โมง|นาฬิกา|:|\.))/);
+  if (dayOnlyMatch) {
+    const day = Number(dayOnlyMatch[1]);
+    let year = base.year;
+    let month = base.month;
+    if (day < base.day) {
+      month += 1;
+      if (month > 12) {
+        month = 1;
+        year += 1;
+      }
+    }
+    return safeDateString(year, month, day);
+  }
+
+  return datePartsToString(base);
+}
+
+function parseThaiDueTime(text) {
+  const digitalMatch = text.match(/(?:เวลา\s*)?([01]?\d|2[0-3])\s*[:.]\s*([0-5]\d)/);
+  if (digitalMatch) return `${digitalMatch[1].padStart(2, "0")}:${digitalMatch[2]}`;
+
+  const eveningMatch = text.match(/(\d{1,2})\s*ทุ่ม(?:\s*(ครึ่ง))?/);
+  if (eveningMatch) {
+    const hour = Number(eveningMatch[1]) + 18;
+    if (hour <= 23) return `${String(hour).padStart(2, "0")}:${eveningMatch[2] ? "30" : "00"}`;
+  }
+
+  const afternoonMatch = text.match(/บ่าย\s*(\d{1,2})(?:\s*โมง)?(?:\s*(ครึ่ง))?/);
+  if (afternoonMatch) {
+    const hour = Number(afternoonMatch[1]) + 12;
+    if (hour <= 23) return `${String(hour).padStart(2, "0")}:${afternoonMatch[2] ? "30" : "00"}`;
+  }
+
+  const clockMatch = text.match(/(?:เวลา\s*)?(\d{1,2})\s*(โมง(?:เช้า|เย็น)?|นาฬิกา)(?:\s*(ครึ่ง))?/);
+  if (!clockMatch) return "";
+  let hour = Number(clockMatch[1]);
+  if (/เย็น/.test(clockMatch[2]) && hour < 12) hour += 12;
+  if (/เช้า/.test(clockMatch[2]) && hour === 12) hour = 0;
+  if (hour > 23) return "";
+  return `${String(hour).padStart(2, "0")}:${clockMatch[3] ? "30" : "00"}`;
+}
+
+function stripThaiSchedulePhrases(text) {
+  return text
+    .replace(/(?:วันนี้|พรุ่งนี้|มะรืน)/g, " ")
+    .replace(/วันที่?\s*\d{1,2}\s*เดือนหน้า/g, " ")
+    .replace(/วันที่?\s*\d{1,2}\s*(?:มกราคม|มกรา|ม\.ค\.|กุมภาพันธ์|กุมภา|ก\.พ\.|มีนาคม|มีนา|มี\.ค\.|เมษายน|เมษา|เม\.ย\.|พฤษภาคม|พฤษภา|พ\.ค\.|มิถุนายน|มิถุนา|มิ\.ย\.|กรกฎาคม|กรกฎา|ก\.ค\.|สิงหาคม|สิงหา|ส\.ค\.|กันยายน|กันยา|ก\.ย\.|ตุลาคม|ตุลา|ต\.ค\.|พฤศจิกายน|พฤศจิกา|พ\.ย\.|ธันวาคม|ธันวา|ธ\.ค\.)(?:\s*\d{2,4})?/g, " ")
+    .replace(/วันที่?\s*\d{1,2}/g, " ")
+    .replace(/(?:เวลา\s*)?(?:[01]?\d|2[0-3])\s*[:.]\s*[0-5]\d/g, " ")
+    .replace(/\d{1,2}\s*ทุ่ม(?:\s*ครึ่ง)?/g, " ")
+    .replace(/บ่าย\s*\d{1,2}(?:\s*โมง)?(?:\s*ครึ่ง)?/g, " ")
+    .replace(/(?:เวลา\s*)?\d{1,2}\s*(?:โมง(?:เช้า|เย็น)?|นาฬิกา)(?:\s*ครึ่ง)?/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[,;:.\-–—]+|[,;:.\-–—]+$/g, "")
+    .trim();
+}
+
+function bangkokDateParts(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return { year: Number(values.year), month: Number(values.month), day: Number(values.day) };
+}
+
+function bangkokDateString(date) {
+  return datePartsToString(bangkokDateParts(date));
+}
+
+function addCalendarDays(parts, days) {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days, 12));
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate()
+  };
+}
+
+function safeDateString(year, month, day) {
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  if (
+    date.getUTCFullYear() !== year
+    || date.getUTCMonth() + 1 !== month
+    || date.getUTCDate() !== day
+  ) {
+    return bangkokDateString(new Date());
+  }
+  return datePartsToString({ year, month, day });
+}
+
+function datePartsToString(parts) {
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildTaskSummaryText(tasks) {
+  const open = tasks.filter((task) => task.status !== "done");
+  const done = tasks.filter((task) => task.status === "done");
+  const today = bangkokDateString(new Date());
+  const todayOpen = open.filter((task) => task.dueDate === today);
+  const overdue = open.filter((task) => task.dueDate && task.dueDate < today);
+  return [
+    "สรุปงาน BossBoard",
+    `งานทั้งหมด: ${tasks.length}`,
+    `ยังไม่เสร็จ: ${open.length}`,
+    `วันนี้: ${todayOpen.length}`,
+    `เลยกำหนด: ${overdue.length}`,
+    `เสร็จแล้ว: ${done.length}`
+  ].join("\n");
+}
+
+function buildTaskListText(title, tasks) {
+  if (!tasks.length) return `${title}\nไม่มีงานค้างอยู่`;
+  const rows = tasks.slice(0, 10).map((task, index) => {
+    const due = formatThaiTaskDue(task);
+    return `${index + 1}. ${task.title} — ${due}`;
+  });
+  if (tasks.length > 10) rows.push(`และอีก ${tasks.length - 10} งาน`);
+  return [title, ...rows].join("\n");
+}
+
+function formatThaiTaskDue(task) {
+  if (!task.dueDate) return "ยังไม่กำหนด";
+  const [year, month, day] = task.dueDate.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  const label = new Intl.DateTimeFormat("th-TH", {
+    timeZone: "Asia/Bangkok",
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  }).format(date);
+  return task.dueTime ? `${label} ${task.dueTime} น.` : label;
+}
+
+async function replyLineMessage(env, replyToken, messages) {
+  const response = await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ replyToken, messages })
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`LINE reply failed (${response.status}): ${detail}`);
+  }
+}
+
+function maskIdentifier(value) {
+  const text = String(value || "");
+  if (text.length < 8) return "***";
+  return `${text.slice(0, 4)}…${text.slice(-4)}`;
 }
 
 async function handleNativeTasks(context, url, currentUser) {
@@ -621,3 +1096,11 @@ function stripHopByHopHeaders(headers) {
     "upgrade"
   ].forEach((header) => headers.delete(header));
 }
+
+export {
+  parseNaturalTask,
+  parseThaiDueDate,
+  parseThaiDueTime,
+  stripThaiSchedulePhrases,
+  verifyLineWebhookSignature
+};
